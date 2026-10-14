@@ -9,6 +9,7 @@ import {
   nativeCodingAgentForAvailableAgent,
   type NativeCodingAgentSpec,
 } from "@/lib/nativeCodingAgents";
+import type { SkillSummary } from "@/lib/types";
 
 export interface AvailableAgent {
   id: string;
@@ -23,7 +24,7 @@ export interface AvailableAgent {
   // Skills bundled in the agent spec (name + one-line description).
   // Shown while discovery loads; the skills endpoint returns the effective catalog.
   // Empty on older servers without the field.
-  skills: { name: string; description: string }[];
+  skills: SkillSummary[];
   // Server-seeded built-in (deterministic, name-derived id) vs a
   // user-registered template. Only set on catalog rows from GET /v1/agents;
   // omitted on session-derived agents and on older servers without the field
@@ -130,7 +131,7 @@ interface BuiltinAgentWire {
   name: string;
   description?: string | null;
   harness?: string | null;
-  skills?: { name: string; description: string }[];
+  skills?: SkillSummary[];
   // True only for server-seeded built-ins (deterministic id). Absent on
   // older servers, where every catalog row degrades to a protected entry.
   builtin?: boolean;
@@ -256,7 +257,7 @@ interface AgentObjectWire {
   name: string;
   description?: string | null;
   harness?: string | null;
-  skills?: { name: string; description: string }[];
+  skills?: SkillSummary[];
 }
 
 function sessionAgentFromDiscovery(discovered: DiscoveredSessionAgent): AvailableAgent {
