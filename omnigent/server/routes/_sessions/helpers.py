@@ -5965,7 +5965,8 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
     nearest live ancestor's), so it rides a runner an ancestor owns, and
     stopping that runner would take the parent and every sibling down. A
     sub-agent owns its runner only when a bounded walk reads every ancestor row
-    and none is bound to the same runner; an unverifiable chain fails closed.
+    and none is bound to the same runner or left unbound on the same host; an
+    unverifiable chain fails closed.
 
     :param conv: Session row whose ``host_id``/``runner_id`` binding is being
         torn down.
@@ -5993,8 +5994,12 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
                 extra={"session_id": conv.id},
             )
             return False
-        # A missing row could hide the owning ancestor, so leave the runner up.
-        if ancestor is None or ancestor.runner_id == conv.runner_id:
+        # A missing or unbound ancestor row could hide the owner, so leave the runner up.
+        if (
+            ancestor is None
+            or ancestor.runner_id == conv.runner_id
+            or (ancestor.runner_id is None and ancestor.host_id == conv.host_id)
+        ):
             return False
         ancestor_id = ancestor.parent_conversation_id
     if ancestor_id is None:

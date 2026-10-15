@@ -70,6 +70,20 @@ GRANDCHILD_OWN = _row("grandchild", runner_id="runner-grandchild", parent="child
         ),
         pytest.param(GRANDCHILD_OWN, [ROOT], False, 1, id="missing ancestor row fails closed"),
         pytest.param(
+            CHILD_RIDING,
+            [_row("root", runner_id=None)],
+            False,
+            1,
+            id="unbound ancestor on the same host fails closed",
+        ),
+        pytest.param(
+            CHILD_OWN,
+            [_row("root", runner_id=None, host_id=None)],
+            True,
+            1,
+            id="ancestor without a host runner does not own the child's",
+        ),
+        pytest.param(
             _row("loop-b", runner_id="own", parent="loop-a", root="loop-a"),
             [_row("loop-a", runner_id="other", parent="loop-b", root="loop-a")],
             False,
@@ -86,14 +100,19 @@ async def test_owns_host_runner(
     assert store.reads == reads
 
 
+_LIMIT = sessions_helpers._OWNERSHIP_ANCESTOR_LOOKUP_LIMIT
+
+
 @pytest.mark.asyncio
-async def test_owns_host_runner_fails_closed_past_the_ancestor_bound(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(sessions_helpers, "_OWNERSHIP_ANCESTOR_LOOKUP_LIMIT", 1)
-    store = _Rows(ROOT, CHILD_OWN)
-    assert await _owns_host_runner(GRANDCHILD_OWN, store) is False  # type: ignore[arg-type]
-    assert store.reads == 1
+@pytest.mark.parametrize("depth", [_LIMIT, _LIMIT + 1], ids=["at the bound", "past the bound"])
+async def test_owns_host_runner_reads_exactly_the_ancestor_bound(depth: int) -> None:
+    """A chain of exactly the bound is verified; one more ancestor fails closed."""
+    rows = [_row("a0", runner_id="runner-a0")]
+    for i in range(1, depth + 1):
+        rows.append(_row(f"a{i}", runner_id=f"runner-a{i}", parent=f"a{i - 1}", root="a0"))
+    leaf, store = rows[-1], _Rows(*rows[:-1])
+    assert await _owns_host_runner(leaf, store) is (depth <= _LIMIT)  # type: ignore[arg-type]
+    assert store.reads == min(depth, _LIMIT)
 
 
 @pytest.mark.asyncio
