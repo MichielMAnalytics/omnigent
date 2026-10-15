@@ -5952,6 +5952,10 @@ _RELAUNCH_MEMO_MAX = 512
 _detached_supersede_stops: set[asyncio.Task[None]] = set()
 
 
+# Ancestor rows read per ownership check; deeper chains leave the runner up.
+_OWNERSHIP_ANCESTOR_LOOKUP_LIMIT = 16
+
+
 async def _owns_host_runner(conv: Conversation, conversation_store: ConversationStore) -> bool:
     """
     Whether ``conv`` owns the host runner it is bound to.
@@ -5960,8 +5964,8 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
     inherits its parent's ``runner_id`` (a stale binding is healed back to the
     nearest live ancestor's), so it rides a runner an ancestor owns, and
     stopping that runner would take the parent and every sibling down. A
-    sub-agent owns its runner only when every ancestor row is readable and none
-    is bound to the same runner; an unverifiable chain fails closed.
+    sub-agent owns its runner only when a bounded walk reads every ancestor row
+    and none is bound to the same runner; an unverifiable chain fails closed.
 
     :param conv: Session row whose ``host_id``/``runner_id`` binding is being
         torn down.
@@ -5972,7 +5976,9 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
         return False
     visited = {conv.id}
     ancestor_id = conv.parent_conversation_id
-    while ancestor_id is not None:
+    for _ in range(_OWNERSHIP_ANCESTOR_LOOKUP_LIMIT):
+        if ancestor_id is None:
+            return True
         if ancestor_id in visited:
             return False
         visited.add(ancestor_id)
@@ -5981,7 +5987,7 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
         if ancestor is None or ancestor.runner_id == conv.runner_id:
             return False
         ancestor_id = ancestor.parent_conversation_id
-    return True
+    return ancestor_id is None
 
 
 def _spawn_superseded_runner_stop(

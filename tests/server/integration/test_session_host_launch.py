@@ -4026,7 +4026,11 @@ class _HostFrameResponder:
             output = await self._comm.receive_output(timeout=budget(30.0))
             if output["type"] != "websocket.send":
                 continue
-            frame = decode_host_frame(output["text"])
+            try:
+                frame = decode_host_frame(output["text"])
+            except ValueError:
+                # Keepalive pings interleave with the frames under test.
+                continue
             if isinstance(frame, HostStatFrame):
                 reply: object = HostStatResultFrame(
                     request_id=frame.request_id,
@@ -4205,43 +4209,42 @@ async def test_stopping_child_does_not_stop_parents_shared_runner(
 async def test_child_relaunch_does_not_stop_parents_shared_runner(
     client: httpx.AsyncClient,
     app: FastAPI,
+    db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
     _shared_runner_family: dict[str, str],
 ) -> None:
     """A child's relaunch must not reap the runner it inherited from its parent."""
     from omnigent.server.routes import sessions as sessions_module
     from omnigent.server.routes._sessions import helpers as sessions_helpers
+    from omnigent.server.routes.sessions import routes_events
 
     monkeypatch.setattr(sessions_module, "_HOST_BOUND_RUNNER_CONNECT_GRACE_S", 0.0)
+    monkeypatch.setattr(routes_events, "_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S", 0.2)
     comm = await _connect_host(app)
     parent = await _inline_launch_session(client, comm)
     async with _HostFrameResponder(comm) as host:
         child = await _inline_child_session(client, parent["id"])
         _shared_runner_family.update(parent=parent["id"], child=child["id"])
-        post_task = asyncio.create_task(
-            client.post(
-                f"/v1/sessions/{child['id']}/events",
-                json={
-                    "type": "message",
-                    "data": {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
-                },
-            )
+        response = await client.post(
+            f"/v1/sessions/{child['id']}/events",
+            json={
+                "type": "message",
+                "data": {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+            },
         )
-        try:
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(asyncio.shield(post_task), timeout=budget(10.0))
-            await asyncio.gather(
-                *list(sessions_helpers._detached_supersede_stops), return_exceptions=True
-            )
-        finally:
-            post_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await post_task
+        await asyncio.gather(
+            *list(sessions_helpers._detached_supersede_stops), return_exceptions=True
+        )
 
+    assert [frame.session_id for frame in host.launch_frames] == [child["id"]], response.text
+    rebound_runner_id = SqlAlchemyConversationStore(db_uri).get_conversation(child["id"]).runner_id
+    assert rebound_runner_id not in (None, parent["runner_id"]), (
+        f"the relaunch should bind child {child['id']} to a runner of its own, "
+        f"got {rebound_runner_id!r}"
+    )
     assert parent["runner_id"] not in host.stopped_runner_ids, (
         f"relaunching child {child['id']} asked the host to stop the parent's runner "
-        f"{parent['runner_id']} (launches: {len(host.launch_frames)}, "
-        f"stops: {host.stopped_runner_ids})"
+        f"{parent['runner_id']} (stops: {host.stopped_runner_ids})"
     )
 
 
@@ -4296,4 +4299,37 @@ async def test_archiving_grandchild_on_roots_shared_runner_does_not_stop_it(
     assert host.stopped_runner_ids == [], (
         f"archiving grandchild {grandchild['id']} asked the host to stop "
         f"{host.stopped_runner_ids}; it still rides the root's runner {parent['runner_id']}"
+    )
+
+
+async def test_archiving_child_past_the_shared_runner_ancestry_bound_keeps_its_runner(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    _shared_runner_family: dict[str, str],
+) -> None:
+    """Ownership that the bounded ancestor walk cannot verify leaves the runner up."""
+    from omnigent.server.routes._sessions import helpers as sessions_helpers
+
+    monkeypatch.setattr(sessions_helpers, "_OWNERSHIP_ANCESTOR_LOOKUP_LIMIT", 1)
+    comm = await _connect_host(app)
+    parent = await _inline_launch_session(client, comm)
+    async with _HostFrameResponder(comm) as host:
+        child = await _inline_child_session(client, parent["id"])
+        grandchild = await _inline_child_session(client, child["id"])
+        _shared_runner_family.update(
+            parent=parent["id"], child=child["id"], grandchild=grandchild["id"]
+        )
+        SqlAlchemyConversationStore(db_uri).replace_runner_id(
+            grandchild["id"], token_bound_runner_id("grandchild-own-binding-token")
+        )
+
+        archive = await client.patch(f"/v1/sessions/{grandchild['id']}", json={"archived": True})
+        assert archive.status_code == 200, archive.text
+        await _drain_detached_stops()
+
+    assert host.stopped_runner_ids == [], (
+        f"a one-ancestor bound cannot verify grandchild {grandchild['id']} owns its runner, "
+        f"yet the host was asked to stop {host.stopped_runner_ids}"
     )
