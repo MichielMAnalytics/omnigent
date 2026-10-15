@@ -5954,16 +5954,14 @@ _detached_supersede_stops: set[asyncio.Task[None]] = set()
 
 async def _owns_host_runner(conv: Conversation, conversation_store: ConversationStore) -> bool:
     """
-    Whether ``conv`` is the session that owns the host runner it is bound to.
+    Whether ``conv`` owns the host runner it is bound to.
 
-    A top-level host-bound session owns the runner launched for it. A sub-agent
-    created with ``parent_session_id`` keeps its ``host_id`` but inherits its
-    parent's ``runner_id``, and a stale child binding is healed back to the
-    nearest live ancestor's runner, so the child rides a runner an ancestor
-    owns. Stopping that runner on the child's stop, archive, or relaunch would
-    take the parent and every sibling down with it. A sub-agent owns its runner
-    only when no ancestor is bound to the same one, such as a runner relaunched
-    for the child alone.
+    A sub-agent created with ``parent_session_id`` keeps its ``host_id`` but
+    inherits its parent's ``runner_id`` (a stale binding is healed back to the
+    nearest live ancestor's), so it rides a runner an ancestor owns, and
+    stopping that runner would take the parent and every sibling down. A
+    sub-agent owns its runner only when every ancestor row is readable and none
+    is bound to the same runner; an unverifiable chain fails closed.
 
     :param conv: Session row whose ``host_id``/``runner_id`` binding is being
         torn down.
@@ -5974,21 +5972,15 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
         return False
     visited = {conv.id}
     ancestor_id = conv.parent_conversation_id
-    while ancestor_id is not None and ancestor_id not in visited:
+    while ancestor_id is not None:
+        if ancestor_id in visited:
+            return False
         visited.add(ancestor_id)
         ancestor = await asyncio.to_thread(conversation_store.get_conversation, ancestor_id)
-        if ancestor is None:
-            break
-        if ancestor.runner_id == conv.runner_id:
+        # A missing row could hide the owning ancestor, so leave the runner up.
+        if ancestor is None or ancestor.runner_id == conv.runner_id:
             return False
         ancestor_id = ancestor.parent_conversation_id
-    # A row missing mid-chain still leaves the root to compare against.
-    if conv.root_conversation_id not in visited:
-        root = await asyncio.to_thread(
-            conversation_store.get_conversation, conv.root_conversation_id
-        )
-        if root is not None and root.runner_id == conv.runner_id:
-            return False
     return True
 
 
@@ -6146,9 +6138,8 @@ async def _launch_runner_on_host_locked(
     with runner_log_scope(conv.id, new_runner_id):
         if reap_superseded and superseded_runner_id and conv.host_id is not None:
             # The old runner is unbound as of the replace above; reap it so it
-            # doesn't idle on the host forever (tunnel still authenticating,
-            # forwarder still tailing this session). A sub-agent's inherited
-            # runner stays up for the ancestor that owns it.
+            # doesn't idle on the host. A sub-agent's inherited runner stays up
+            # for the ancestor that owns it.
             _spawn_superseded_runner_stop(
                 conv.id, conv.host_id, superseded_runner_id, host_registry
             )
