@@ -5980,7 +5980,7 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
         if ancestor_id is None:
             return True
         if ancestor_id in visited:
-            return False
+            break
         visited.add(ancestor_id)
         try:
             ancestor = await asyncio.to_thread(conversation_store.get_conversation, ancestor_id)
@@ -5997,7 +5997,17 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
         if ancestor is None or ancestor.runner_id == conv.runner_id:
             return False
         ancestor_id = ancestor.parent_conversation_id
-    return ancestor_id is None
+    if ancestor_id is None:
+        return True
+    _logger.warning(
+        "Runner ownership check for %s stopped at ancestor %s (cycle or more than %d "
+        "ancestors); leaving the runner up",
+        conv.id,
+        ancestor_id,
+        _OWNERSHIP_ANCESTOR_LOOKUP_LIMIT,
+        extra={"session_id": conv.id},
+    )
+    return False
 
 
 def _spawn_superseded_runner_stop(
