@@ -5982,7 +5982,17 @@ async def _owns_host_runner(conv: Conversation, conversation_store: Conversation
         if ancestor_id in visited:
             return False
         visited.add(ancestor_id)
-        ancestor = await asyncio.to_thread(conversation_store.get_conversation, ancestor_id)
+        try:
+            ancestor = await asyncio.to_thread(conversation_store.get_conversation, ancestor_id)
+        except Exception:  # noqa: BLE001
+            _logger.warning(
+                "Runner ownership check for %s could not read ancestor %s; leaving the runner up",
+                conv.id,
+                ancestor_id,
+                exc_info=True,
+                extra={"session_id": conv.id},
+            )
+            return False
         # A missing row could hide the owning ancestor, so leave the runner up.
         if ancestor is None or ancestor.runner_id == conv.runner_id:
             return False

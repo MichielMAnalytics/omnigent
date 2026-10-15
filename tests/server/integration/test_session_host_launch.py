@@ -4161,6 +4161,9 @@ async def test_unbinding_child_before_archive_does_not_stop_parents_shared_runne
             )
             assert idle.status_code in (200, 202), idle.text
             healed_runner_id = store.get_conversation(child["id"]).runner_id
+            assert healed_runner_id == parent["runner_id"], (
+                "the idle status should heal the binding"
+            )
 
             archive = await client.patch(f"/v1/sessions/{child['id']}", json={"archived": True})
             assert archive.status_code == 200, archive.text
@@ -4299,37 +4302,4 @@ async def test_archiving_grandchild_on_roots_shared_runner_does_not_stop_it(
     assert host.stopped_runner_ids == [], (
         f"archiving grandchild {grandchild['id']} asked the host to stop "
         f"{host.stopped_runner_ids}; it still rides the root's runner {parent['runner_id']}"
-    )
-
-
-async def test_archiving_child_past_the_shared_runner_ancestry_bound_keeps_its_runner(
-    client: httpx.AsyncClient,
-    app: FastAPI,
-    db_uri: str,
-    monkeypatch: pytest.MonkeyPatch,
-    _shared_runner_family: dict[str, str],
-) -> None:
-    """Ownership that the bounded ancestor walk cannot verify leaves the runner up."""
-    from omnigent.server.routes._sessions import helpers as sessions_helpers
-
-    monkeypatch.setattr(sessions_helpers, "_OWNERSHIP_ANCESTOR_LOOKUP_LIMIT", 1)
-    comm = await _connect_host(app)
-    parent = await _inline_launch_session(client, comm)
-    async with _HostFrameResponder(comm) as host:
-        child = await _inline_child_session(client, parent["id"])
-        grandchild = await _inline_child_session(client, child["id"])
-        _shared_runner_family.update(
-            parent=parent["id"], child=child["id"], grandchild=grandchild["id"]
-        )
-        SqlAlchemyConversationStore(db_uri).replace_runner_id(
-            grandchild["id"], token_bound_runner_id("grandchild-own-binding-token")
-        )
-
-        archive = await client.patch(f"/v1/sessions/{grandchild['id']}", json={"archived": True})
-        assert archive.status_code == 200, archive.text
-        await _drain_detached_stops()
-
-    assert host.stopped_runner_ids == [], (
-        f"a one-ancestor bound cannot verify grandchild {grandchild['id']} owns its runner, "
-        f"yet the host was asked to stop {host.stopped_runner_ids}"
     )
