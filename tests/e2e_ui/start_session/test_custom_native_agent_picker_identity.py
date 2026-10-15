@@ -1,8 +1,10 @@
-"""E2E: custom claude-native agents registered at startup keep their own New Chat picker rows.
+"""E2E: custom claude-native agents registered at startup keep their own picker rows.
 
 Boots a real ``omnigent server`` with ``--agent autoresearch.yaml`` (a user
 template) and ``OMNIGENT_BUILTIN_AGENT_DIRS=teamresearch.yaml`` (a seeded
-built-in), plus a real ``omnigent host`` so the landing picker is enabled.
+built-in), plus a real ``omnigent host`` so the landing picker is enabled. Both
+the New Chat picker and the Project settings default-agent picker are checked;
+they read the same agent list.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -193,6 +196,11 @@ def catalog_rows(base_url: str) -> dict[str, dict[str, object]]:
     return {row["name"]: row for row in resp.json()["data"]}
 
 
+def create_project(base_url: str, name: str) -> None:
+    resp = httpx.post(f"{base_url}/v1/projects", json={"name": name}, timeout=10.0)
+    resp.raise_for_status()
+
+
 @pytest.fixture(scope="module")
 def custom_native_agent_server(
     built_spa: None, tmp_path_factory: pytest.TempPathFactory
@@ -290,3 +298,34 @@ def test_custom_native_agents_keep_their_own_picker_rows(
     if os.environ.get("OMNIGENT_E2E_RECORD_DIR"):
         # Hold the resolved picker so a recording ends on the three distinct rows.
         page.wait_for_timeout(2_000)
+
+
+def test_project_settings_picker_offers_custom_native_agents(
+    request: pytest.FixtureRequest,
+    custom_native_agent_server: ServerRig,
+    registered_host: HostRig,
+) -> None:
+    """The project default-agent picker offers both custom agents under their own names."""
+    base_url = custom_native_agent_server.base_url
+    rows = catalog_rows(base_url)
+    project = f"Team project {uuid.uuid4().hex[:6]}"
+    create_project(base_url, project)
+
+    page: Page = request.getfixturevalue("page")
+    page.goto(f"{base_url}/")
+    actions = page.get_by_role("button", name=f"Project actions for {project}", exact=True)
+    expect(actions).to_be_visible(timeout=30_000)
+    actions.click()
+    page.get_by_test_id("project-settings").click()
+    expect(page.get_by_test_id("project-settings-save")).to_be_enabled()
+    page.get_by_test_id("project-settings-agent").get_by_test_id(
+        "new-chat-landing-agent-select"
+    ).click()
+    stock_row = page.get_by_test_id(f"new-chat-landing-agent-{rows[STOCK_AGENT_NAME]['id']}")
+    expect(stock_row).to_be_visible(timeout=30_000)
+
+    for name in (TEMPLATE_AGENT_NAME, SEEDED_AGENT_NAME):
+        row = reveal_row(page, str(rows[name]["id"]))
+        expect(row).to_be_visible(timeout=10_000)
+        expect(row).to_contain_text(re.compile(name, re.IGNORECASE))
+    expect(page.get_by_role("menuitem", name=STOCK_LABEL, exact=True)).to_have_count(1)
