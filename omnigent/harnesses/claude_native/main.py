@@ -5945,6 +5945,19 @@ def _assistant_snapshot_blocks(entry: _JsonObject) -> list[object] | None:
     return None
 
 
+def _snapshot_source_ids(entry: _JsonObject) -> list[object]:
+    """Return the forwarded item source ids a snapshot entry already covers."""
+    source_ids = entry.get("forwarded_source_ids")
+    return list(source_ids) if isinstance(source_ids, list) else []
+
+
+def _with_snapshot_source_ids(entry: _JsonObject, extra: list[object]) -> _JsonObject:
+    """Return *entry* also covering the *extra* forwarded item source ids."""
+    if not extra:
+        return entry
+    return {**entry, "forwarded_source_ids": [*_snapshot_source_ids(entry), *extra]}
+
+
 def _rejoin_split_server_tool_results(compacted_messages: list[object]) -> list[_JsonObject]:
     """
     Return snapshot entries with each server tool result beside its call.
@@ -5958,13 +5971,21 @@ def _rejoin_split_server_tool_results(compacted_messages: list[object]) -> list[
     :returns: String-keyed entries with every server tool pair in one message.
     """
     rejoined: list[_JsonObject] = []
+    # Source ids of entries dropped below; they move to a neighbour so the
+    # caller keeps suppressing the items the snapshot already covers.
+    dropped_source_ids: list[object] = []
+
+    def append(entry: _JsonObject) -> None:
+        rejoined.append(_with_snapshot_source_ids(entry, dropped_source_ids))
+        dropped_source_ids.clear()
+
     for value in compacted_messages:
         entry = _json_object(value)
         if entry is None:
             continue
         blocks = _assistant_snapshot_blocks(entry)
         if blocks is None:
-            rejoined.append(entry)
+            append(entry)
             continue
         called = _server_tool_call_ids(blocks)
         missing = {
@@ -5974,12 +5995,18 @@ def _rejoin_split_server_tool_results(compacted_messages: list[object]) -> list[
             and call_id not in called
         }
         if not missing:
-            rejoined.append(entry)
+            append(entry)
             continue
+        message_id = entry.get("message_id")
         start = len(rejoined)
         for index in range(len(rejoined) - 1, -1, -1):
-            run_blocks = _assistant_snapshot_blocks(rejoined[index])
-            if run_blocks is None:
+            run_entry = rejoined[index]
+            run_blocks = _assistant_snapshot_blocks(run_entry)
+            run_message_id = run_entry.get("message_id")
+            # Claude Code rejoins records of one response only; never fold across ids.
+            if run_blocks is None or (
+                message_id and run_message_id and run_message_id != message_id
+            ):
                 break
             found = missing & _server_tool_call_ids(run_blocks)
             if found:
@@ -5995,26 +6022,28 @@ def _rejoin_split_server_tool_results(compacted_messages: list[object]) -> list[
         }
         if start == len(rejoined):
             if kept["content"]:
-                rejoined.append(kept)
+                append(kept)
+            else:
+                dropped_source_ids.extend(_snapshot_source_ids(kept))
             continue
         run = [*rejoined[start:], kept]
         del rejoined[start:]
-        rejoined.append(_merge_assistant_snapshot_entries(run))
+        append(_merge_assistant_snapshot_entries(run))
+    if dropped_source_ids and rejoined:
+        rejoined[-1] = _with_snapshot_source_ids(rejoined[-1], dropped_source_ids)
     return rejoined
 
 
 def _merge_assistant_snapshot_entries(entries: list[_JsonObject]) -> _JsonObject:
-    """Merge consecutive assistant snapshot entries into one message."""
+    """Merge consecutive assistant snapshot entries of one response into one message."""
     merged: _JsonObject = {**entries[0]}
     merged["content"] = [
         block for entry in entries for block in cast(list[object], entry["content"])
     ]
-    source_ids = [
-        source_id
-        for entry in entries
-        if isinstance(entry.get("forwarded_source_ids"), list)
-        for source_id in entry["forwarded_source_ids"]
-    ]
+    message_id = next((entry["message_id"] for entry in entries if entry.get("message_id")), None)
+    if message_id is not None:
+        merged["message_id"] = message_id
+    source_ids = [source_id for entry in entries for source_id in _snapshot_source_ids(entry)]
     if source_ids:
         merged["forwarded_source_ids"] = source_ids
     return merged

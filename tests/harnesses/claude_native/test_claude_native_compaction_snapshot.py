@@ -735,29 +735,15 @@ _SERVER_TOOL_CALL_ID = "srvtoolu_01retained"
 def _server_tool_transcript(
     tool_name: str, result_type: str, result_content: Any
 ) -> list[dict[str, Any]]:
-    def record(
-        kind: str, uid: str, parent: str | None, content: Any, message_id: str | None = None
-    ) -> dict[str, Any]:
-        message: dict[str, Any] = {"role": kind, "content": content}
-        if message_id is not None:
-            message["id"] = message_id
-        return {
-            "type": kind,
-            "uuid": uid,
-            "parentUuid": parent,
-            "sessionId": _EXTERNAL_SESSION_ID,
-            "message": message,
-        }
-
     # Claude Code writes one record per content block; blocks of one API
     # response share message.id, which is how it rejoins them on resume.
     return [
-        record("user", "old", None, "older context already summarized"),
-        record("user", "request", "old", "ask the advisor about the retry policy"),
-        record(
+        _claude_record("user", "old", None, "older context already summarized"),
+        _claude_record("user", "request", "old", "ask the advisor about the retry policy"),
+        _claude_record(
             "assistant", "asking", "request", [{"type": "text", "text": "Asking."}], "msg_asking"
         ),
-        record(
+        _claude_record(
             "assistant",
             "call",
             "asking",
@@ -771,7 +757,7 @@ def _server_tool_transcript(
             ],
             "msg_server_tool",
         ),
-        record(
+        _claude_record(
             "assistant",
             "result",
             "call",
@@ -784,7 +770,7 @@ def _server_tool_transcript(
             ],
             "msg_server_tool",
         ),
-        record(
+        _claude_record(
             "assistant", "done", "result", [{"type": "text", "text": "Consulted."}], "msg_done"
         ),
         {
@@ -801,7 +787,7 @@ def _server_tool_transcript(
             },
         },
         {
-            **record("user", "summary", "boundary", "summary of older context"),
+            **_claude_record("user", "summary", "boundary", "summary of older context"),
             "isCompactSummary": True,
             "isVisibleInTranscriptOnly": True,
         },
@@ -877,7 +863,7 @@ _ADVISOR_RESULT = {"type": "advisor_result", "content": [{"type": "text", "text"
 
 
 def _claude_record(
-    kind: str, uid: str, parent: str, content: Any, message_id: str | None = None
+    kind: str, uid: str, parent: str | None, content: Any, message_id: str | None = None
 ) -> dict[str, Any]:
     message: dict[str, Any] = {"role": kind, "content": content}
     if message_id is not None:
@@ -1027,9 +1013,11 @@ def test_orphaned_server_tool_result_is_dropped_on_resume() -> None:
     records = _records(
         [
             {"type": "message", "role": "user", "content": "summary of older context"},
-            _legacy_assistant_entry([result]),
+            _legacy_assistant_entry([result], "orphan:0:message"),
             _legacy_assistant_entry([{"type": "text", "text": "Consulted."}, result]),
-        ]
+        ],
+        # The dropped entry's items stay covered by the snapshot.
+        [_later_assistant_item("orphan:0:message", "[Advisor response]")],
     )
 
     assert [record["message"]["content"] for record in records[1:]] == [
@@ -1037,3 +1025,53 @@ def test_orphaned_server_tool_result_is_dropped_on_resume() -> None:
         [{"type": "text", "text": "Consulted."}],
     ]
     assert all(record["parentUuid"] == parent["uuid"] for parent, record in pairwise(records))
+
+
+def test_server_tool_result_is_not_folded_across_another_response() -> None:
+    call = {"type": "server_tool_use", "id": _SERVER_TOOL_CALL_ID, "name": "advisor", "input": {}}
+    result = {
+        "type": "advisor_tool_result",
+        "tool_use_id": _SERVER_TOOL_CALL_ID,
+        "content": _ADVISOR_RESULT,
+    }
+    other_reply = {"type": "text", "text": "Unrelated reply."}
+
+    records = _records(
+        [
+            {"type": "message", "role": "user", "content": "summary of older context"},
+            {**_legacy_assistant_entry([call]), "message_id": "msg_call"},
+            {**_legacy_assistant_entry([other_reply]), "message_id": "msg_other"},
+            {**_legacy_assistant_entry([result]), "message_id": "msg_call"},
+        ]
+    )
+
+    assert [
+        (record["message"]["content"], record["message"].get("id")) for record in records[1:]
+    ] == [
+        ("summary of older context", None),
+        ([call], "msg_call"),
+        ([other_reply], "msg_other"),
+    ]
+
+
+def test_rejoined_server_tool_pair_keeps_its_response_message_id() -> None:
+    call = {"type": "server_tool_use", "id": _SERVER_TOOL_CALL_ID, "name": "advisor", "input": {}}
+    result = {
+        "type": "advisor_tool_result",
+        "tool_use_id": _SERVER_TOOL_CALL_ID,
+        "content": _ADVISOR_RESULT,
+    }
+
+    records = _records(
+        [
+            {"type": "message", "role": "user", "content": "summary of older context"},
+            _legacy_assistant_entry([call]),
+            {**_legacy_assistant_entry([result]), "message_id": "msg_pair"},
+        ]
+    )
+
+    assert records[2]["message"] == {
+        "role": "assistant",
+        "content": [call, result],
+        "id": "msg_pair",
+    }
