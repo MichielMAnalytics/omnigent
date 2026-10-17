@@ -9277,12 +9277,12 @@ _LOGIN_GUIDANCE = (
     "`/login` is not available from the Omnigent web chat — run "
     "`omni setup` on the host to sign in again."
 )
-# A managed sandbox's credentials are provisioned at launch; a new session is
-# the only self-service way to get current ones.
+# A managed sandbox's credentials are provisioned at launch, so a new session
+# is the only self-service step; renewing them is the deployment's job.
 _LOGIN_GUIDANCE_MANAGED_SANDBOX = (
     "`/login` is not available from the Omnigent web chat, and this session's "
-    "sandbox has no shell to sign in from. Start a new session to get freshly "
-    "provisioned credentials."
+    "sandbox has no shell to sign in from. Start a new session; if sign-in still "
+    "fails, ask your sandbox administrator to refresh its credentials."
 )
 
 
