@@ -1042,7 +1042,10 @@ def test_snapshot_of_only_orphaned_results_still_covers_its_items() -> None:
     assert [record["type"] for record in records] == ["system"]
 
 
-def test_server_tool_result_is_not_folded_across_another_response() -> None:
+@pytest.mark.parametrize("result_message_id", ["msg_call", None])
+def test_server_tool_result_is_not_folded_across_another_response(
+    result_message_id: str | None,
+) -> None:
     call = {"type": "server_tool_use", "id": _SERVER_TOOL_CALL_ID, "name": "advisor", "input": {}}
     result = {
         "type": "advisor_tool_result",
@@ -1050,13 +1053,16 @@ def test_server_tool_result_is_not_folded_across_another_response() -> None:
         "content": _ADVISOR_RESULT,
     }
     other_reply = {"type": "text", "text": "Unrelated reply."}
+    result_entry = _legacy_assistant_entry([result])
+    if result_message_id is not None:
+        result_entry["message_id"] = result_message_id
 
     records = _records(
         [
             {"type": "message", "role": "user", "content": "summary of older context"},
             {**_legacy_assistant_entry([call]), "message_id": "msg_call"},
             {**_legacy_assistant_entry([other_reply]), "message_id": "msg_other"},
-            {**_legacy_assistant_entry([result]), "message_id": "msg_call"},
+            result_entry,
         ]
     )
 

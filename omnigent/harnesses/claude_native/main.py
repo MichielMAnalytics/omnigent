@@ -5991,17 +5991,18 @@ def _rejoin_split_server_tool_results(
         if not missing:
             rejoined.append(entry)
             continue
-        message_id = entry.get("message_id")
+        # Claude Code rejoins records of one response only; never fold across ids.
+        known_message_id = entry.get("message_id") or None
         start = len(rejoined)
         for index in range(len(rejoined) - 1, -1, -1):
             run_entry = rejoined[index]
             run_blocks = _assistant_snapshot_blocks(run_entry)
-            run_message_id = run_entry.get("message_id")
-            # Claude Code rejoins records of one response only; never fold across ids.
+            run_message_id = run_entry.get("message_id") or None
             if run_blocks is None or (
-                message_id and run_message_id and run_message_id != message_id
+                known_message_id and run_message_id and run_message_id != known_message_id
             ):
                 break
+            known_message_id = known_message_id or run_message_id
             found = missing & _server_tool_call_ids(run_blocks)
             if found:
                 missing -= found
