@@ -86,15 +86,6 @@ def test_structured_user_message_is_not_promoted_to_summary() -> None:
 
 
 def _transcript(*, segment_only: bool = False) -> list[dict[str, Any]]:
-    def message(kind: str, uid: str, parent: str | None, content: Any) -> dict[str, Any]:
-        return {
-            "type": kind,
-            "uuid": uid,
-            "parentUuid": parent,
-            "sessionId": _EXTERNAL_SESSION_ID,
-            "message": {"role": kind, "content": content},
-        }
-
     metadata: dict[str, Any] = {
         "trigger": "manual",
         "preservedSegment": {
@@ -109,9 +100,9 @@ def _transcript(*, segment_only: bool = False) -> list[dict[str, Any]]:
             "uuids": ["request", "call", "result"],
         }
     return [
-        message("user", "old", None, "older context already summarized"),
-        message("user", "request", "old", "continue the retained request"),
-        message(
+        _claude_record("user", "old", None, "older context already summarized"),
+        _claude_record("user", "request", "old", "continue the retained request"),
+        _claude_record(
             "assistant",
             "call",
             "request",
@@ -124,7 +115,7 @@ def _transcript(*, segment_only: bool = False) -> list[dict[str, Any]]:
                 }
             ],
         ),
-        message(
+        _claude_record(
             "user",
             "result",
             "call",
@@ -144,7 +135,7 @@ def _transcript(*, segment_only: bool = False) -> list[dict[str, Any]]:
             "compactMetadata": metadata,
         },
         {
-            **message("user", "summary", "boundary", "summary of older context"),
+            **_claude_record("user", "summary", "boundary", "summary of older context"),
             "isCompactSummary": True,
             "isVisibleInTranscriptOnly": True,
         },
@@ -1072,6 +1063,30 @@ def test_server_tool_result_is_not_folded_across_another_response(
         ("summary of older context", None),
         ([call], "msg_call"),
         ([other_reply], "msg_other"),
+    ]
+
+
+def test_already_paired_server_tool_entry_is_left_unchanged() -> None:
+    call = {"type": "server_tool_use", "id": _SERVER_TOOL_CALL_ID, "name": "advisor", "input": {}}
+    result = {
+        "type": "advisor_tool_result",
+        "tool_use_id": _SERVER_TOOL_CALL_ID,
+        "content": _ADVISOR_RESULT,
+    }
+    # A snapshot taken after a cold resume reads the rebuilt record holding the pair.
+    paired = [{"type": "text", "text": "Asking."}, call, result, {"type": "text", "text": "Done."}]
+
+    records = _records(
+        [
+            {"type": "message", "role": "user", "content": "summary of older context"},
+            {**_legacy_assistant_entry(paired, "paired:0:message"), "message_id": "msg_pair"},
+        ],
+        [_later_assistant_item("paired:0:message", "Asking.")],
+    )
+
+    assert [record["message"] for record in records[1:]] == [
+        {"role": "user", "content": "summary of older context"},
+        {"role": "assistant", "content": paired, "id": "msg_pair"},
     ]
 
 
