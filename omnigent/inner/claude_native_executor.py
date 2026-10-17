@@ -14,6 +14,7 @@ from pathlib import Path
 from omnigent.harnesses.claude_native.bridge import (
     BRIDGE_DIR_ENV_VAR,
     CLAUDE_FRAMEWORK_CONTEXT_FILE,
+    MANAGED_SANDBOX_SIGN_IN_REMEDY,
     REQUEST_SESSION_ID_ENV_VAR,
     SWITCH_MODEL_DIALOG_HINT,
     ClaudeMessageNotAccepted,
@@ -60,13 +61,9 @@ _AUTH_COMMAND_GUIDANCE = (
     "nothing from the web chat. Run omni setup on the host to sign in again — "
     "or to sign out — then retry."
 )
-# A managed sandbox receives its credentials at launch, so a new session is the
-# only self-service step; renewing them is the deployment's job.
 _AUTH_COMMAND_GUIDANCE_MANAGED_SANDBOX = (
     "Claude Code's sign-in runs in its own terminal, so /login and /logout do "
-    "nothing from the web chat. This sandbox received its sign-in credentials at "
-    "launch — start a new session; if sign-in still fails, ask the sandbox "
-    "administrator to refresh its credentials."
+    "nothing from the web chat. " + MANAGED_SANDBOX_SIGN_IN_REMEDY
 )
 
 

@@ -219,7 +219,16 @@ async def test_run_turn_rejects_stale_session_after_clear(
     ("in_managed_sandbox", "required_phrases", "unreachable_remedy"),
     [
         (False, ("omni setup",), "new session"),
-        (True, ("new session", "sandbox administrator"), "omni setup"),
+        (
+            True,
+            (
+                "new session",
+                "if sign-in still fails",
+                "sandbox administrator",
+                "refresh its credentials",
+            ),
+            "omni setup",
+        ),
     ],
 )
 async def test_run_turn_points_auth_commands_at_a_remedy_reachable_from_the_host(
