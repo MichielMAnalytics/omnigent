@@ -216,10 +216,10 @@ async def test_run_turn_rejects_stale_session_after_clear(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command", ["/login", "/logout"])
 @pytest.mark.parametrize(
-    ("in_managed_sandbox", "named_remedy", "unreachable_remedy"),
+    ("in_managed_sandbox", "required_phrases", "unreachable_remedy"),
     [
-        (False, "omni setup", "new session"),
-        (True, "new session", "omni setup"),
+        (False, ("omni setup",), "new session"),
+        (True, ("new session", "sandbox administrator"), "omni setup"),
     ],
 )
 async def test_run_turn_points_auth_commands_at_a_remedy_reachable_from_the_host(
@@ -227,7 +227,7 @@ async def test_run_turn_points_auth_commands_at_a_remedy_reachable_from_the_host
     tmp_path: Path,
     command: str,
     in_managed_sandbox: bool,
-    named_remedy: str,
+    required_phrases: tuple[str, ...],
     unreachable_remedy: str,
 ) -> None:
     """
@@ -239,8 +239,8 @@ async def test_run_turn_points_auth_commands_at_a_remedy_reachable_from_the_host
     answer is "Login expired · Please run /login" — the instruction the
     user just followed, so the turn is wasted and the session is stuck.
     Fail the turn with a remedy the user can perform: ``omni setup`` on
-    their own host, or a new session when the host is a managed sandbox
-    (``IS_SANDBOX=1``) with no shell to run it from.
+    their own host, or a new session (then the sandbox administrator) on a
+    managed sandbox (``IS_SANDBOX=1``), which cannot run it.
     """
     if in_managed_sandbox:
         monkeypatch.setenv("IS_SANDBOX", "1")
@@ -282,7 +282,8 @@ async def test_run_turn_points_auth_commands_at_a_remedy_reachable_from_the_host
 
     assert len(events) == 1
     assert isinstance(events[0], ExecutorError)
-    assert named_remedy in events[0].message
+    for phrase in required_phrases:
+        assert phrase in events[0].message
     assert unreachable_remedy not in events[0].message
     assert events[0].undelivered is True
 

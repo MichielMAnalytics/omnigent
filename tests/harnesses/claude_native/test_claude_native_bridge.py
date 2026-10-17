@@ -1772,35 +1772,26 @@ def test_read_transcript_rewrites_logout_and_login_together(tmp_path: Path) -> N
     assert _assistant_transcript_text(tmp_path, raw_text, is_api_error=True) == expected
 
 
-@pytest.mark.parametrize(
-    ("in_managed_sandbox", "named_remedy", "unreachable_remedy"),
-    [
-        (False, "omni setup", "new session"),
-        (True, "new session", "omni setup"),
-    ],
-)
-def test_read_transcript_login_guidance_names_a_remedy_reachable_from_the_host(
+def test_read_transcript_login_guidance_in_managed_sandbox_points_at_a_new_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    in_managed_sandbox: bool,
-    named_remedy: str,
-    unreachable_remedy: str,
 ) -> None:
     """
-    The appended remedy must be one the user can perform where the session runs.
+    A managed sandbox (``IS_SANDBOX=1``) cannot run ``omni setup``.
 
-    A managed sandbox (``IS_SANDBOX=1``) has no shell for ``omni setup``, so its
-    only self-service recovery is a new session; the CLI's text is kept either way.
+    Its credentials arrive at launch, so the appended remedy names the only
+    self-service step (a new session) and the fallback when that still fails
+    (the sandbox administrator). The CLI's own text is kept.
     """
-    if in_managed_sandbox:
-        monkeypatch.setenv("IS_SANDBOX", "1")
+    monkeypatch.setenv("IS_SANDBOX", "1")
     raw_text = "Login expired · Please run /login"
 
     rendered = _assistant_transcript_text(tmp_path, raw_text, is_api_error=True)
 
     assert rendered.startswith(f"{raw_text}\n\n")
-    assert named_remedy in rendered
-    assert unreachable_remedy not in rendered
+    assert "new session" in rendered
+    assert "sandbox administrator" in rendered
+    assert "omni setup" not in rendered
 
 
 def test_read_transcript_items_from_offset_skips_existing_prefix(
@@ -8280,6 +8271,7 @@ def test_hook_record_stop_failure_login_guidance_in_managed_sandbox(
     assert login.failure_message.startswith("Login expired · Please run /login\n\n")
     assert "omni setup" not in login.failure_message
     assert "new session" in login.failure_message
+    assert "sandbox administrator" in login.failure_message
 
 
 def test_hook_record_stop_failure_last_assistant_message_not_used() -> None:

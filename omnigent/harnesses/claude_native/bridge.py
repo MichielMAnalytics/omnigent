@@ -9228,7 +9228,7 @@ _CONTEXT_OVERFLOW_REPLACEMENT = (
 # plain text and answered by the same expired session with the same
 # line. These records get guidance APPENDED sending the user to
 # ``omni setup`` on the host, which does re-authenticate — or, on a
-# managed sandbox with no shell to run it from, to a new session.
+# managed sandbox that cannot run it, to a new session.
 #
 # The strings are hardcoded constants in the CLI binary (read out of
 # @anthropic-ai/claude-code 2.1.212), and there is more than one shape:
@@ -9277,12 +9277,12 @@ _LOGIN_GUIDANCE = (
     "`/login` is not available from the Omnigent web chat — run "
     "`omni setup` on the host to sign in again."
 )
-# A managed sandbox's credentials are provisioned at launch, so a new session
-# is the only self-service step; renewing them is the deployment's job.
+# A managed sandbox receives its credentials at launch, so a new session is the
+# only self-service step; renewing them is the deployment's job.
 _LOGIN_GUIDANCE_MANAGED_SANDBOX = (
-    "`/login` is not available from the Omnigent web chat, and this session's "
-    "sandbox has no shell to sign in from. Start a new session; if sign-in still "
-    "fails, ask your sandbox administrator to refresh its credentials."
+    "`/login` is not available from the Omnigent web chat, and this sandbox "
+    "received its sign-in credentials at launch. Start a new session; if sign-in "
+    "still fails, ask the sandbox administrator to refresh its credentials."
 )
 
 
