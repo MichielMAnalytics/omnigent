@@ -1027,6 +1027,21 @@ def test_orphaned_server_tool_result_is_dropped_on_resume() -> None:
     assert all(record["parentUuid"] == parent["uuid"] for parent, record in pairwise(records))
 
 
+def test_snapshot_of_only_orphaned_results_still_covers_its_items() -> None:
+    result = {
+        "type": "advisor_tool_result",
+        "tool_use_id": _SERVER_TOOL_CALL_ID,
+        "content": _ADVISOR_RESULT,
+    }
+
+    records = _records(
+        [_legacy_assistant_entry([result], "orphan:0:message")],
+        [_later_assistant_item("orphan:0:message", "[Advisor response]")],
+    )
+
+    assert [record["type"] for record in records] == ["system"]
+
+
 def test_server_tool_result_is_not_folded_across_another_response() -> None:
     call = {"type": "server_tool_use", "id": _SERVER_TOOL_CALL_ID, "name": "advisor", "input": {}}
     result = {

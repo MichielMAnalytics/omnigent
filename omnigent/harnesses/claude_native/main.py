@@ -5651,9 +5651,11 @@ def _claude_transcript_records_from_session_items(
                     }
                 )
                 parent_uuid = boundary_uuid
-                for compacted_index, compacted_message in enumerate(
-                    _rejoin_split_server_tool_results(compacted_messages)
-                ):
+                rejoined, dropped_source_ids = _rejoin_split_server_tool_results(
+                    compacted_messages
+                )
+                snapshot_item_ids.update(_snapshot_item_ids(session_id, dropped_source_ids))
+                for compacted_index, compacted_message in enumerate(rejoined):
                     cm_uuid = _synthetic_claude_transcript_uuid(
                         session_id=session_id,
                         external_session_id=external_session_id,
@@ -5672,16 +5674,9 @@ def _claude_transcript_records_from_session_items(
                     if cm_record is not None:
                         records.append(cm_record)
                         parent_uuid = cm_uuid
-                        source_ids = compacted_message.get("forwarded_source_ids")
-                        if isinstance(source_ids, list):
-                            snapshot_item_ids.update(
-                                uuid.uuid5(
-                                    uuid.NAMESPACE_URL,
-                                    f"omnigent-external-item:{session_id}:{source_id}",
-                                ).hex
-                                for source_id in source_ids
-                                if isinstance(source_id, str)
-                            )
+                        snapshot_item_ids.update(
+                            _snapshot_item_ids(session_id, _snapshot_source_ids(compacted_message))
+                        )
             continue
         record_uuid = _synthetic_claude_transcript_uuid(
             session_id=session_id,
@@ -5951,14 +5946,18 @@ def _snapshot_source_ids(entry: _JsonObject) -> list[object]:
     return list(source_ids) if isinstance(source_ids, list) else []
 
 
-def _with_snapshot_source_ids(entry: _JsonObject, extra: list[object]) -> _JsonObject:
-    """Return *entry* also covering the *extra* forwarded item source ids."""
-    if not extra:
-        return entry
-    return {**entry, "forwarded_source_ids": [*_snapshot_source_ids(entry), *extra]}
+def _snapshot_item_ids(session_id: str, source_ids: list[object]) -> set[str]:
+    """Return the Omnigent item ids of forwarded items a snapshot already covers."""
+    return {
+        uuid.uuid5(uuid.NAMESPACE_URL, f"omnigent-external-item:{session_id}:{source_id}").hex
+        for source_id in source_ids
+        if isinstance(source_id, str)
+    }
 
 
-def _rejoin_split_server_tool_results(compacted_messages: list[object]) -> list[_JsonObject]:
+def _rejoin_split_server_tool_results(
+    compacted_messages: list[object],
+) -> tuple[list[_JsonObject], list[object]]:
     """
     Return snapshot entries with each server tool result beside its call.
 
@@ -5968,24 +5967,19 @@ def _rejoin_split_server_tool_results(compacted_messages: list[object]) -> list[
     the preceding assistant run holding its call; drop results whose call is gone.
 
     :param compacted_messages: Snapshot entries of a compaction item.
-    :returns: String-keyed entries with every server tool pair in one message.
+    :returns: String-keyed entries with every server tool pair in one message,
+        and the forwarded source ids of entries dropped as orphaned results,
+        which the snapshot still covers.
     """
     rejoined: list[_JsonObject] = []
-    # Source ids of entries dropped below; they move to a neighbour so the
-    # caller keeps suppressing the items the snapshot already covers.
     dropped_source_ids: list[object] = []
-
-    def append(entry: _JsonObject) -> None:
-        rejoined.append(_with_snapshot_source_ids(entry, dropped_source_ids))
-        dropped_source_ids.clear()
-
     for value in compacted_messages:
         entry = _json_object(value)
         if entry is None:
             continue
         blocks = _assistant_snapshot_blocks(entry)
         if blocks is None:
-            append(entry)
+            rejoined.append(entry)
             continue
         called = _server_tool_call_ids(blocks)
         missing = {
@@ -5995,7 +5989,7 @@ def _rejoin_split_server_tool_results(compacted_messages: list[object]) -> list[
             and call_id not in called
         }
         if not missing:
-            append(entry)
+            rejoined.append(entry)
             continue
         message_id = entry.get("message_id")
         start = len(rejoined)
@@ -6022,16 +6016,14 @@ def _rejoin_split_server_tool_results(compacted_messages: list[object]) -> list[
         }
         if start == len(rejoined):
             if kept["content"]:
-                append(kept)
+                rejoined.append(kept)
             else:
                 dropped_source_ids.extend(_snapshot_source_ids(kept))
             continue
         run = [*rejoined[start:], kept]
         del rejoined[start:]
-        append(_merge_assistant_snapshot_entries(run))
-    if dropped_source_ids and rejoined:
-        rejoined[-1] = _with_snapshot_source_ids(rejoined[-1], dropped_source_ids)
-    return rejoined
+        rejoined.append(_merge_assistant_snapshot_entries(run))
+    return rejoined, dropped_source_ids
 
 
 def _merge_assistant_snapshot_entries(entries: list[_JsonObject]) -> _JsonObject:
