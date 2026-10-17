@@ -6009,6 +6009,12 @@ def _rejoin_split_server_tool_results(
                 start = index
             if not missing:
                 break
+        if missing:
+            _logger.warning(
+                "Dropping orphaned server tool result(s) from a Claude compaction "
+                "snapshot; tool_use_ids=%s",
+                sorted(missing),
+            )
         kept: _JsonObject = {
             **entry,
             "content": [

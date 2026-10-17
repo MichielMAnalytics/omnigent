@@ -994,22 +994,29 @@ def test_legacy_snapshot_rejoins_split_server_tool_pair_on_resume(
     assert all(record["parentUuid"] == parent["uuid"] for parent, record in pairwise(records))
 
 
-def test_orphaned_server_tool_result_is_dropped_on_resume() -> None:
+def test_orphaned_server_tool_result_is_dropped_on_resume(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     result = {
         "type": "advisor_tool_result",
         "tool_use_id": _SERVER_TOOL_CALL_ID,
         "content": _ADVISOR_RESULT,
     }
 
-    records = _records(
-        [
-            {"type": "message", "role": "user", "content": "summary of older context"},
-            _legacy_assistant_entry([result], "orphan:0:message"),
-            _legacy_assistant_entry([{"type": "text", "text": "Consulted."}, result]),
-        ],
-        # The dropped entry's items stay covered by the snapshot.
-        [_later_assistant_item("orphan:0:message", "[Advisor response]")],
-    )
+    with caplog.at_level(logging.WARNING):
+        records = _records(
+            [
+                {"type": "message", "role": "user", "content": "summary of older context"},
+                _legacy_assistant_entry([result], "orphan:0:message"),
+                _legacy_assistant_entry([{"type": "text", "text": "Consulted."}, result]),
+            ],
+            # The dropped entry's items stay covered by the snapshot.
+            [_later_assistant_item("orphan:0:message", "[Advisor response]")],
+        )
+
+    # The dropped results are diagnosable by call id; their content is not logged.
+    assert caplog.text.count(f"tool_use_ids=['{_SERVER_TOOL_CALL_ID}']") == 2
+    assert "Use backoff." not in caplog.text
 
     assert [record["message"]["content"] for record in records[1:]] == [
         "summary of older context",
