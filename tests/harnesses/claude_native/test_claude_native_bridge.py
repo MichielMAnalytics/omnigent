@@ -1672,7 +1672,6 @@ def test_read_transcript_leaves_unflagged_login_text_untouched(
 )
 def test_read_transcript_rewrites_flagged_api_error_anywhere(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     raw_text: str,
 ) -> None:
     """
@@ -1685,21 +1684,17 @@ def test_read_transcript_rewrites_flagged_api_error_anywhere(
     strings whose instruction sits mid-sentence. The CLI's own text is
     kept: variants whose remedy goes beyond re-auth must not lose it.
     """
-    monkeypatch.delenv("IS_SANDBOX", raising=False)
     expected = f"{raw_text}\n\n{_LOGIN_GUIDANCE}"
     assert _assistant_transcript_text(tmp_path, raw_text, is_api_error=True) == expected
 
 
-def test_read_transcript_flag_inside_message_also_counts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_read_transcript_flag_inside_message_also_counts(tmp_path: Path) -> None:
     """
     The flag is honoured inside ``message`` as well as beside it.
 
     Claude Code writes it as a sibling of ``message`` but reads it back
     from both places, so accept either rather than betting on one.
     """
-    monkeypatch.delenv("IS_SANDBOX", raising=False)
     transcript_path = tmp_path / "session.jsonl"
     transcript_path.write_text(
         json.dumps(
@@ -1758,9 +1753,7 @@ def test_read_transcript_flagged_record_without_login_is_untouched(
     assert _assistant_transcript_text(tmp_path, raw_text, is_api_error=True) == raw_text
 
 
-def test_read_transcript_rewrites_logout_and_login_together(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_read_transcript_rewrites_logout_and_login_together(tmp_path: Path) -> None:
     """
     A message naming BOTH commands is still a ``/login`` dead end.
 
@@ -1770,7 +1763,6 @@ def test_read_transcript_rewrites_logout_and_login_together(
     which ``omni setup`` cannot do) must stay on screen, so the CLI
     text is kept and the guidance appended below it.
     """
-    monkeypatch.delenv("IS_SANDBOX", raising=False)
     raw_text = (
         "If CLAUDE_CODE_OAUTH_TOKEN is set, unset it or re-mint it for this "
         "account, then /logout and /login."
@@ -1802,8 +1794,6 @@ def test_read_transcript_login_guidance_names_a_remedy_reachable_from_the_host(
     """
     if in_managed_sandbox:
         monkeypatch.setenv("IS_SANDBOX", "1")
-    else:
-        monkeypatch.delenv("IS_SANDBOX", raising=False)
     raw_text = "Login expired · Please run /login"
 
     rendered = _assistant_transcript_text(tmp_path, raw_text, is_api_error=True)
@@ -8249,11 +8239,8 @@ def test_hook_record_failure_fields_none_when_blank_or_not_stop_failure() -> Non
     assert stop.failure_message is None
 
 
-def test_hook_record_stop_failure_message_gets_web_chat_guidance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_hook_record_stop_failure_message_gets_web_chat_guidance() -> None:
     """The failure card rewrites dead-end CLI remedies in ``error_details``."""
-    monkeypatch.delenv("IS_SANDBOX", raising=False)
     overflow = _hook_record_from_jsonl_record(
         _make_jsonl_record(
             {"hook_event_name": "StopFailure", "error_details": "Prompt is too long"}
