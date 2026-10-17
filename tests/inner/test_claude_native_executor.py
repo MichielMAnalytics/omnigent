@@ -222,6 +222,7 @@ async def test_run_turn_rejects_stale_session_after_clear(
         (
             True,
             (
+                "credentials at launch",
                 "new session",
                 "if sign-in still fails",
                 "sandbox administrator",

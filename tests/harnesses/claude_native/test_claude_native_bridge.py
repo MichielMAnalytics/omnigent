@@ -1789,6 +1789,7 @@ def test_read_transcript_login_guidance_in_managed_sandbox_points_at_a_new_sessi
     rendered = _assistant_transcript_text(tmp_path, raw_text, is_api_error=True)
 
     assert rendered.startswith(f"{raw_text}\n\n")
+    assert "credentials at launch" in rendered
     assert "new session" in rendered
     assert "if sign-in still fails" in rendered
     assert "sandbox administrator" in rendered
@@ -8272,6 +8273,7 @@ def test_hook_record_stop_failure_login_guidance_in_managed_sandbox(
     assert login.failure_message is not None
     assert login.failure_message.startswith("Login expired · Please run /login\n\n")
     assert "omni setup" not in login.failure_message
+    assert "credentials at launch" in login.failure_message
     assert "new session" in login.failure_message
     assert "if sign-in still fails" in login.failure_message
     assert "sandbox administrator" in login.failure_message

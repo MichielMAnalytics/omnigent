@@ -9277,9 +9277,8 @@ _LOGIN_GUIDANCE = (
     "`/login` is not available from the Omnigent web chat — run "
     "`omni setup` on the host to sign in again."
 )
-# A managed sandbox receives its credentials at launch, so a new session is the
-# only self-service step; renewing them is the deployment's job. Shared with the
-# executor's /login short-circuit so the two surfaces cannot drift apart.
+# Shared with the executor's /login short-circuit so the two surfaces cannot
+# drift apart; a new session is the only self-service step on a managed sandbox.
 MANAGED_SANDBOX_SIGN_IN_REMEDY = (
     "This sandbox received its sign-in credentials at launch. Start a new "
     "session; if sign-in still fails, ask the sandbox administrator to refresh "

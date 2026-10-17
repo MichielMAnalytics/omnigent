@@ -21,8 +21,9 @@ HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
 HOST_ID_ENV_VAR = "OMNIGENT_HOST_ID"
 HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
 
-# Baked into the managed-sandbox host image and set on its Pod spec; never
-# present on a person's own host.
+# Set by the managed-sandbox host image/Pod spec, never on a person's own host.
+# Claude Code's devcontainer convention sets it too, so such a devcontainer is
+# treated as managed, like the git and Databricks credential gates already do.
 MANAGED_SANDBOX_ENV_VAR = "IS_SANDBOX"
 
 
