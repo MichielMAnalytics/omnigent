@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -46,12 +47,13 @@ class _Client:
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
         self.status_code = 201
+        self.response_json: dict[str, Any] = {"status": "initialized"}
 
     async def post(self, _path: str, **kwargs: Any) -> httpx.Response:
         self.calls.append(kwargs["json"])
         self.entered.set()
         await self.release.wait()
-        return httpx.Response(self.status_code, json={"status": "initialized"})
+        return httpx.Response(self.status_code, json=self.response_json)
 
 
 def _conversation() -> Conversation:
@@ -77,24 +79,40 @@ async def test_initializer_shares_result_for_one_tunnel_generation() -> None:
     )
     conversation = _conversation()
 
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
     first = asyncio.create_task(initializer.initialize(conversation, client, timeout=10))  # type: ignore[arg-type]
     await client.entered.wait()
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
     second = asyncio.create_task(initializer.initialize(conversation, client, timeout=10))  # type: ignore[arg-type]
     await asyncio.sleep(0)
     client.release.set()
     first_response, second_response = await asyncio.gather(first, second)
 
     assert first_response is second_response
+    assert initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
     assert len(client.calls) == 1
     assert client.calls[0]["session_init"]["snapshot"]["workspace"] == "/tmp/workspace"
 
     cached = await initializer.initialize(conversation, client, timeout=10)  # type: ignore[arg-type]
     assert cached is first_response
     assert len(client.calls) == 1
+    conversation.inference_snapshot = {"runtime_config": {"providers": {}}}
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
+    conversation.inference_snapshot = None
 
     initializer.invalidate_runner("runner_init")
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
     await initializer.initialize(conversation, client, timeout=10)  # type: ignore[arg-type]
     assert len(client.calls) == 2
+    registry.connection = SimpleNamespace(generation=2)
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
+    await initializer.initialize(conversation, client, timeout=10)  # type: ignore[arg-type]
+    assert initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
+    conversation.agent_id = "different_agent"
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
+    conversation.agent_id = "agent_init"
+    conversation.sub_agent_name = "different_child"
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -113,6 +131,7 @@ async def test_initializer_evicts_rejected_result_for_retry() -> None:
     second = await initializer.initialize(conversation, client, timeout=10)  # type: ignore[arg-type]
 
     assert first.status_code == second.status_code == 503
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
     assert len(client.calls) == 2
 
 
@@ -243,8 +262,10 @@ async def test_recovery_has_own_readiness_and_stable_identity_across_failed_post
     assert len(client.calls) == 3
     # A later binding back to this live runner starts a distinct recovery.
     initializer.invalidate_session(conv.id)
+    assert not initializer.is_initialized(conv, client)  # type: ignore[arg-type]
     await initializer.initialize(conv, client, timeout=10, resume_interrupted_turn=True)  # type: ignore[arg-type]
     assert client.calls[-1]["session_init"]["recovery_id"] != first_id
+    assert initializer.is_initialized(conv, client)  # type: ignore[arg-type]
 
 
 class _AdvertisedRunner:
@@ -375,10 +396,12 @@ async def test_init_logs_rejection_retry_and_cached_success_once() -> None:
     client.release.set()
     initializer = RunnerSessionInitializer(registry, server_version="test")  # type: ignore[arg-type]
     conversation = _conversation()
+    client.response_json = {"error": "runner overloaded"}
     with capture_debug_rows("server") as rows:
         client.status_code = 503
         await initializer.initialize(conversation, client, timeout=1)  # type: ignore[arg-type]
         client.status_code = 201
+        client.response_json = {"status": "initialized"}
         await initializer.initialize(conversation, client, timeout=1)  # type: ignore[arg-type]
         await initializer.initialize(conversation, client, timeout=1)  # type: ignore[arg-type]
     events = [row for row in rows if row["event_name"]]
@@ -390,7 +413,14 @@ async def test_init_logs_rejection_retry_and_cached_success_once() -> None:
     ]
     assert all(row["session_id"] == conversation.id for row in events)
     assert all(row["attributes"]["runner_id"] == conversation.runner_id for row in events)
-    assert events[1]["attributes"]["status_code"] == "503"
+    # Non-2xx row carries status code, body snippet, and a distinct message.
+    rejected: dict[str, Any] = events[1]
+    assert rejected["attributes"]["status_code"] == "503"
+    assert rejected["attributes"]["response_body"] == "runner overloaded"
+    assert rejected["level"] == "WARNING"
+    assert "finished" not in rejected["message"]
+    # Success row logs at INFO.
+    assert events[3]["level"] == "INFO"
     # The init-started row says what the server asked the runner to do.
     assert events[0]["attributes"]["resume_interrupted_turn"] == "False"
     assert events[0]["attributes"]["suppress_recovery_turn"] == "False"
@@ -419,6 +449,55 @@ async def test_init_attributes_dropped_tunnel_to_runner(error: Exception) -> Non
     [failed] = [row for row in rows if row["event_name"] == "runner_session_init_failed"]
     assert failed["attributes"]["error_category"] == "runner"
     assert failed["attributes"]["error_impact"] == "transient"
+    assert failed["attributes"]["exc_type"] == type(error).__name__
+
+
+@pytest.mark.asyncio
+async def test_init_logs_transport_error_as_warning_without_traceback() -> None:
+    """Transport loss during POST /v1/sessions is recoverable on the next reconnect."""
+    from tests.debug_log_helpers import capture_debug_rows
+
+    registry = _Registry()
+    initializer = RunnerSessionInitializer(registry, server_version="test")  # type: ignore[arg-type]
+    conversation = _conversation()
+
+    class _TunnelDropClient:
+        async def post(self, _path: str, **kwargs: Any) -> httpx.Response:
+            raise httpx.ConnectError("tunnel closed before request completed")
+
+    with capture_debug_rows("server") as rows:
+        with pytest.raises(httpx.ConnectError):
+            await initializer.initialize(conversation, _TunnelDropClient(), timeout=1)  # type: ignore[arg-type]
+
+    transport_rows = [row for row in rows if row["event_name"] == "runner_session_init_failed"]
+    assert len(transport_rows) == 1
+    row: dict[str, Any] = transport_rows[0]
+    assert row["level"] == "WARNING"
+    assert row["stack_trace"] is None
+    assert row["attributes"]["exc_type"] == "ConnectError"
+
+
+@pytest.mark.asyncio
+async def test_init_logs_unexpected_exception_as_error_with_traceback() -> None:
+    """Unexpected exceptions during POST /v1/sessions stay at ERROR with traceback."""
+    from tests.debug_log_helpers import capture_debug_rows
+
+    registry = _Registry()
+    initializer = RunnerSessionInitializer(registry, server_version="test")  # type: ignore[arg-type]
+    conversation = _conversation()
+
+    class _BrokenClient:
+        async def post(self, _path: str, **kwargs: Any) -> httpx.Response:
+            raise RuntimeError("unexpected internal error")
+
+    with capture_debug_rows("server") as rows:
+        with pytest.raises(RuntimeError):
+            await initializer.initialize(conversation, _BrokenClient(), timeout=1)  # type: ignore[arg-type]
+
+    error_rows = [row for row in rows if row["event_name"] == "runner_session_init_failed"]
+    assert len(error_rows) == 1
+    assert error_rows[0]["level"] == "ERROR"
+    assert error_rows[0]["stack_trace"] is not None
 
 
 @pytest.mark.asyncio
@@ -433,6 +512,64 @@ async def test_cancelling_waiter_preserves_shared_initialization() -> None:
         await waiter
     client.release.set()
     assert (await initializer.initialize(conv, client, timeout=10)).status_code == 201  # type: ignore[arg-type]
+    assert len(client.calls) == 1
+
+
+class _Agents:
+    """Agent store stub whose ``get`` finds only the given ids."""
+
+    def __init__(self, *ids: str) -> None:
+        self.ids = set(ids)
+
+    def get(self, agent_id: str) -> object | None:
+        return object() if agent_id in self.ids else None
+
+
+@pytest.mark.asyncio
+async def test_initializer_skips_a_session_whose_agent_was_removed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The runner could only reject it: no POST, one info line, and a response
+    callers recognize. An agent that still exists initializes as before."""
+    from omnigent.server.runner_session_init import is_session_agent_removed
+
+    client = _Client()
+    client.release.set()
+    conversation = _conversation()
+    removed = RunnerSessionInitializer(  # type: ignore[arg-type]
+        _Registry(), server_version="test", agent_store=_Agents()
+    )
+    with caplog.at_level(logging.INFO, logger="omnigent.server.runner_session_init"):
+        response = await removed.initialize(conversation, client, timeout=1)  # type: ignore[arg-type]
+
+    assert is_session_agent_removed(response)
+    assert client.calls == []
+    records = [r for r in caplog.records if r.name == "omnigent.server.runner_session_init"]
+    assert [(r.levelname, r.exc_info) for r in records] == [("INFO", None)]
+
+    present = RunnerSessionInitializer(  # type: ignore[arg-type]
+        _Registry(), server_version="test", agent_store=_Agents(conversation.agent_id)
+    )
+    response = await present.initialize(conversation, client, timeout=1)  # type: ignore[arg-type]
+    assert response.status_code == 201
+    assert not is_session_agent_removed(response)
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_callers_arriving_during_the_agent_check_share_one_init() -> None:
+    """The agent lookup yields, so a caller arriving meanwhile joins the first
+    caller's initialization instead of sending the runner another."""
+    client = _Client()
+    client.release.set()
+    conversation = _conversation()
+    initializer = RunnerSessionInitializer(  # type: ignore[arg-type]
+        _Registry(), server_version="test", agent_store=_Agents(conversation.agent_id)
+    )
+    responses = await asyncio.gather(
+        *(initializer.initialize(conversation, client, timeout=1) for _ in range(2))  # type: ignore[arg-type]
+    )
+    assert [response.status_code for response in responses] == [201, 201]
     assert len(client.calls) == 1
 
 
@@ -568,3 +705,64 @@ async def test_delayed_initialization_cannot_follow_a_replacement_tunnel() -> No
             await asyncio.gather(init, return_exceptions=True)
     assert not new.in_flight
     assert new.outbound_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_handshake_for_a_removed_agent_forwards_or_says_so() -> None:
+    """A message forward goes ahead (the runner answers it); a caller that needs
+    the runner ready gets the removed-agent error, not "runner unavailable"."""
+    from omnigent.server.routes._sessions.orchestration import (
+        _ensure_runner_session_initialized,
+    )
+
+    conversation = _conversation()
+    initializer = RunnerSessionInitializer(  # type: ignore[arg-type]
+        _Registry(), server_version="test", agent_store=_Agents()
+    )
+    client = _Client()
+    client.release.set()
+
+    forwarded = await _ensure_runner_session_initialized(
+        conversation.id,
+        conversation,
+        client,
+        Mock(),
+        initializer,  # type: ignore[arg-type]
+    )
+    assert forwarded is False
+    with pytest.raises(OmnigentError) as raised:
+        await _ensure_runner_session_initialized(
+            conversation.id,
+            conversation,
+            client,
+            Mock(),
+            initializer,
+            require_success=True,  # type: ignore[arg-type]
+        )
+    assert raised.value.code == ErrorCode.SESSION_AGENT_MISSING
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "level"),
+    [(404, "WARNING"), (410, "WARNING"), (503, "WARNING"), (500, "ERROR"), (409, "ERROR")],
+)
+async def test_init_rejection_level_by_status(status: int, level: str) -> None:
+    """Transient rejections warn; unexpected statuses stay ERROR, never 'finished'."""
+    from tests.debug_log_helpers import capture_debug_rows
+
+    client = _Client()
+    client.release.set()
+    client.status_code = status
+    client.response_json = {"error": "nope"}
+    initializer = RunnerSessionInitializer(_Registry(), server_version="test")  # type: ignore[arg-type]
+    with capture_debug_rows("server") as rows:
+        await initializer.initialize(_conversation(), client, timeout=1)  # type: ignore[arg-type]
+    failed = [r for r in rows if r["event_name"] == "runner_session_init_failed"]
+    assert len(failed) == 1
+    rejected: dict[str, Any] = failed[0]
+    assert rejected["attributes"]["failure_kind"] == "rejected"
+    assert rejected["level"] == level
+    assert rejected["attributes"]["response_body"] == "nope"
+    assert "finished" not in rejected["message"]
