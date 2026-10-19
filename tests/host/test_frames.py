@@ -1607,13 +1607,15 @@ def test_create_worktree_frame_round_trip() -> None:
     """Verify HostCreateWorktreeFrame survives encode → decode.
 
     A garbled repo_path or branch_name would create the worktree in
-    the wrong place or with the wrong branch.
+    the wrong place or with the wrong branch; a lost timeout_s would cut
+    a large checkout short.
     """
     original = HostCreateWorktreeFrame(
         request_id="req_wt_1",
         repo_path="/Users/alice/myrepo",
         branch_name="feature/login",
         base_branch="main",
+        timeout_s=3600.0,
     )
     decoded = decode_host_frame(encode_host_frame(original))
     assert isinstance(decoded, HostCreateWorktreeFrame)
@@ -1663,18 +1665,6 @@ def test_create_worktree_frame_existing_branch_absent_defaults_false() -> None:
     decoded = decode_host_frame(json.dumps(msg))
     assert isinstance(decoded, HostCreateWorktreeFrame)
     assert decoded.existing_branch is False
-
-
-def test_create_worktree_frame_timeout_round_trip() -> None:
-    """The server's create budget survives encode → decode."""
-    original = HostCreateWorktreeFrame(
-        request_id="req_wt_5",
-        repo_path="/repo",
-        branch_name="feature/login",
-        timeout_s=3600.0,
-    )
-    decoded = decode_host_frame(encode_host_frame(original))
-    assert decoded == original
 
 
 def test_create_worktree_frame_timeout_absent_defaults_none() -> None:
