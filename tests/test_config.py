@@ -6,12 +6,14 @@ from pathlib import Path
 
 import pytest
 
+import omnigent.config as _config_module
 from omnigent.config import (
     _merge_effective_config,
     github_account_preference,
     global_config_path,
     load_effective_config,
     load_global_config,
+    load_local_config,
     save_global_config,
     set_github_account_preference,
 )
@@ -89,6 +91,52 @@ def test_effective_config_merges_project_over_user(
     assert load_effective_config() == {"profile": "local", "model": "global-model"}
 
 
+@pytest.mark.parametrize("cwd_available", [False, True])
+def test_effective_config_uses_explicit_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cwd_available: bool
+) -> None:
+    config_home = tmp_path / "home"
+    workspace = tmp_path / "project"
+    other_project = tmp_path / "other"
+    config_home.mkdir()
+    (workspace / ".omnigent").mkdir(parents=True)
+    (other_project / ".omnigent").mkdir(parents=True)
+    (config_home / "config.yaml").write_text(
+        "profile: global\nharness:\n  claude-native:\n    command: global-claude\n"
+        "    args: [--verbose]\n"
+    )
+    (workspace / ".omnigent" / "config.yaml").write_text(
+        "harness:\n  claude-native:\n    command: project-claude\n"
+    )
+    (other_project / ".omnigent" / "config.yaml").write_text("profile: wrong-project\n")
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))
+    monkeypatch.chdir(other_project)
+
+    def missing_cwd() -> Path:
+        raise FileNotFoundError("process cwd was removed")
+
+    if not cwd_available:
+        monkeypatch.setattr(Path, "cwd", missing_cwd)
+
+    assert load_effective_config(workspace=workspace) == {
+        "profile": "global",
+        "harness": {"claude-native": {"command": "project-claude", "args": ["--verbose"]}},
+    }
+
+
+def test_effective_config_workspace_without_project_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_home = tmp_path / "home"
+    workspace = tmp_path / "project"
+    config_home.mkdir()
+    workspace.mkdir()
+    (config_home / "config.yaml").write_text("profile: global\n")
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))
+
+    assert load_effective_config(workspace=workspace) == {"profile": "global"}
+
+
 def test_github_account_preference_round_trip(tmp_path: Path) -> None:
     cfg = tmp_path / "config.yaml"
     key = "/Users/daniel.lok/omnigent"
@@ -133,3 +181,245 @@ def test_save_global_config_respects_config_home(
     # Written to (and read back from) OMNIGENT_CONFIG_HOME/config.yaml.
     assert (tmp_path / "config.yaml").exists()
     assert github_account_preference("/Users/daniel.lok/omnigent") == "daniellok-db"
+
+
+def test_load_local_config_returns_empty_when_cwd_deleted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """load_local_config returns {} when the process cwd no longer exists."""
+    deleted = tmp_path / "deleted_dir"
+    deleted.mkdir()
+    monkeypatch.chdir(deleted)
+    deleted.rmdir()
+    # Reset the module-level warn-once guard so this test is self-contained.
+    monkeypatch.setattr(_config_module, "_cwd_missing_warned", False)
+
+    result = load_local_config()
+
+    assert result == {}
+
+
+def test_load_effective_config_returns_global_when_cwd_deleted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """load_effective_config returns global config when the cwd has been removed."""
+    config_home = tmp_path / "home"
+    config_home.mkdir()
+    (config_home / "config.yaml").write_text("model: global-model\n")
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))
+
+    deleted = tmp_path / "deleted_dir"
+    deleted.mkdir()
+    monkeypatch.chdir(deleted)
+    deleted.rmdir()
+    monkeypatch.setattr(_config_module, "_cwd_missing_warned", False)
+
+    cfg = load_effective_config()
+
+    assert cfg == {"model": "global-model"}
+
+
+def test_load_local_config_explicit_path_unaffected_by_missing_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Passing an explicit path to load_local_config bypasses cwd lookup."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("profile: explicit\n")
+
+    deleted = tmp_path / "deleted_dir"
+    deleted.mkdir()
+    monkeypatch.chdir(deleted)
+    deleted.rmdir()
+    monkeypatch.setattr(_config_module, "_cwd_missing_warned", False)
+
+    result = load_local_config(path=cfg_file)
+
+    assert result == {"profile": "explicit"}
+
+
+def test_adopted_preferences_flow_from_yaml_to_launch_without_rewriting_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from omnigent.harness_startup_config import resolve_harness_args, resolve_harness_config
+    from omnigent.preferences import (
+        PluginIdentity,
+        PreferenceContext,
+        PreferenceIdentity,
+        PreferenceKey,
+        PreferenceKind,
+        PreferenceLayer,
+        PreferenceScope,
+    )
+
+    config_home = tmp_path / "home"
+    project = tmp_path / "project"
+    config_home.mkdir()
+    (project / ".omnigent").mkdir(parents=True)
+    global_path = config_home / "config.yaml"
+    project_path = project / ".omnigent" / "config.yaml"
+    global_path.write_text(
+        "model: stale-global\nopencode_model: stale-opencode\nprofile: local-profile\n"
+        "harness:\n  default: claude-sdk\n  codex-native:\n"
+        "    command: /local/wrapper\n    args: [stale, args]\n"
+    )
+    project_path.write_text("harness:\n  codex-native:\n    args: [--profile, project]\n")
+    original = [path.read_bytes() for path in (global_path, project_path)]
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))
+    identity = PreferenceIdentity("authority", "user", "workspace")
+    context = PreferenceContext(identity, "laptop")
+    model = PreferenceKey(PreferenceKind.MODEL, "model")
+    harness = PreferenceKey(PreferenceKind.HARNESS, "default")
+    args = PreferenceKey(PreferenceKind.HARNESS_ARGS, "codex-native")
+    plugin = PreferenceKey(PreferenceKind.PLUGIN, PluginIdentity("claude", "source", "tools"))
+    shared = PreferenceLayer(
+        PreferenceScope.SHARED,
+        identity,
+        {
+            model: "shared-model",
+            harness: "pi-native",
+            args: ("--profile", "shared"),
+            plugin: False,
+        },
+    )
+    machine = PreferenceLayer(
+        PreferenceScope.MACHINE, identity, {model: "machine-model"}, "laptop"
+    )
+    result = _config_module.resolve_effective_config(
+        load_global_config(),
+        load_local_config(project_path),
+        preference_context=context,
+        preference_layers=[shared, machine],
+    )
+    cfg = load_effective_config(
+        workspace=project, preference_context=context, preference_layers=[shared, machine]
+    )
+    assert cfg == result.config
+    assert cfg["model"] == "machine-model"
+    assert "opencode_model" not in cfg
+    assert cfg["profile"] == "local-profile"
+    default, overrides = resolve_harness_config(cfg)
+    assert default == "pi-native"
+    assert overrides["codex-native"]["command"] == "/local/wrapper"
+    assert resolve_harness_args("codex-native", ("--profile", "invocation"), cfg=cfg) == [
+        "--profile",
+        "project",
+        "--profile",
+        "invocation",
+    ]
+    assert result.preferences[args].source == PreferenceScope.PROJECT
+    assert result.preferences[plugin].value is False
+    assert "plugins" not in cfg
+    inherited = load_effective_config(
+        workspace=project,
+        preference_context=context,
+        preference_layers=[shared, machine.without(model)],
+    )
+    assert inherited["model"] == "shared-model"
+    assert [path.read_bytes() for path in (global_path, project_path)] == original
+    assert load_effective_config(workspace=project)["model"] == "stale-global"
+
+
+def test_cli_and_runtime_preserve_legacy_resolution(monkeypatch):
+    import omnigent.cli as cli
+
+    global_cfg = {
+        "model": "global",
+        "harness": {
+            "default": "claude-sdk",
+            "codex-native": {"command": "wrapper", "args": ["base"]},
+        },
+    }
+    local = {"model": "project", "harness": {"codex-native": {"args": []}}}
+    monkeypatch.setattr(cli, "_load_global_config", lambda: global_cfg)
+    monkeypatch.setattr(cli, "_load_local_config", lambda: local)
+    monkeypatch.setattr(_config_module, "load_global_config", lambda: global_cfg)
+    monkeypatch.setattr(_config_module, "load_local_config", lambda path=None: local)
+    expected = _merge_effective_config(global_cfg, local)
+    assert cli._load_effective_config() == expected
+    assert load_effective_config() == expected
+
+
+def test_preference_adoption_requires_context_and_owns_project_layer():
+    from omnigent.preferences import (
+        PreferenceContext,
+        PreferenceIdentity,
+        PreferenceLayer,
+        PreferenceScope,
+    )
+
+    identity = PreferenceIdentity("authority", "user", "workspace")
+    layer = PreferenceLayer(PreferenceScope.SHARED, identity)
+    with pytest.raises(ValueError, match="require an authenticated context"):
+        _config_module.resolve_effective_config({}, {}, preference_layers=[layer])
+    with pytest.raises(ValueError, match="selected project config"):
+        _config_module.resolve_effective_config(
+            {},
+            {},
+            preference_context=PreferenceContext(identity, "laptop"),
+            preference_layers=[PreferenceLayer(PreferenceScope.PROJECT, identity)],
+        )
+
+
+@pytest.mark.parametrize(
+    "harness,project",
+    [
+        ("codex-native", {"harness": "pi-native"}),
+        ("codex-native", {"harness": None}),
+        ("codex-native", {"model": None}),
+        ("codex-native", {"harness": {"default": None}}),
+        ("codex-native", {"harness": {"codex-native": None}}),
+        ("codex-native", {"harness": {"codex-native": {"args": None}}}),
+        ("claude", {"harness": {"claude": None}}),
+        ("claude", {"harness": {"claude": {"args": None}}}),
+        ("claude", {"harness": {"claude": {"command": "local-wrapper"}}}),
+    ],
+)
+def test_adopted_preferences_keep_legacy_project_clears(harness, project):
+    from omnigent.harness_startup_config import resolve_harness_args
+    from omnigent.preferences import (
+        PreferenceContext,
+        PreferenceIdentity,
+        PreferenceLayer,
+        PreferenceScope,
+        preferences_from_config,
+    )
+
+    identity = PreferenceIdentity("authority", "user", "workspace")
+    defaults = {
+        "model": "model-a",
+        "harness": {
+            "default": harness,
+            harness: {"args": ["base"]},
+        },
+    }
+    shared = PreferenceLayer(PreferenceScope.SHARED, identity, preferences_from_config(defaults))
+    context = PreferenceContext(identity, "laptop")
+    result = _config_module.resolve_effective_config(
+        {},
+        project,
+        preference_context=context,
+        preference_layers=[shared],
+    )
+    assert preferences_from_config(result.config) == preferences_from_config(
+        _merge_effective_config(defaults, project)
+    )
+    assert {
+        key: item.value for key, item in result.preferences.items()
+    } == preferences_from_config(result.config)
+    assert resolve_harness_args(
+        harness, ("--invocation",), cfg=result.config
+    ) == resolve_harness_args(
+        harness, ("--invocation",), cfg=_merge_effective_config(defaults, project)
+    )
+    session = PreferenceLayer(PreferenceScope.SESSION, identity, shared.values)
+    result = _config_module.resolve_effective_config(
+        {},
+        project,
+        preference_context=context,
+        preference_layers=[shared, session],
+    )
+    assert preferences_from_config(result.config) == shared.values
+    assert resolve_harness_args(harness, ("--invocation",), cfg=result.config) == [
+        "base",
+        "--invocation",
+    ]
