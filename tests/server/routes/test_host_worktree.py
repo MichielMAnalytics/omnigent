@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from omnigent.host.frames import (
+    CAP_WORKTREE_CREATE_BUDGET,
     HostCreateWorktreeFrame,
     HostHelloFrame,
     HostListWorktreesFrame,
@@ -52,12 +53,19 @@ class _FakeWebSocket:
         self.sent.append(data)
 
 
-def _hello_frame() -> HostHelloFrame:
+def _hello_frame(capabilities: list[str] | None = None) -> HostHelloFrame:
     """Construct a hello frame for registry registration.
 
+    :param capabilities: Capability tokens the host advertises; ``None``
+        for an older host that advertises none.
     :returns: Hello frame with default version + empty runners.
     """
-    return HostHelloFrame(version="0.1.0-test", frame_protocol_version=1, name="wt-host")
+    return HostHelloFrame(
+        version="0.1.0-test",
+        frame_protocol_version=1,
+        name="wt-host",
+        capabilities=capabilities or [],
+    )
 
 
 @pytest.fixture()
@@ -282,11 +290,12 @@ async def test_create_worktree_timeout_raises_unavailable(
     """No host reply within the timeout raises WorktreeHostUnavailableError.
 
     Uses a host with no auto-replier so the pending future never
-    resolves; a tiny patched timeout keeps the test fast.
+    resolves; a tiny patched timeout keeps the test fast. A host that
+    does not advertise the create budget keeps the short bound.
     """
     import omnigent.server.routes._host_worktree as hw_mod
 
-    monkeypatch.setattr(hw_mod, "_WORKTREE_CREATE_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(hw_mod, "_WORKTREE_TIMEOUT_S", 0.05)
     registry = HostRegistry()
     registry.register(
         host_id="host_silent",
@@ -318,7 +327,7 @@ async def test_create_worktree_outwaits_a_checkout_longer_than_the_short_bound(
     """
     import omnigent.server.routes._host_worktree as hw_mod
 
-    # The host can run one metadata git command or rollback past its budget.
+    # A successful create can run one metadata git command past its budget.
     assert hw_mod._WORKTREE_CREATE_TIMEOUT_S > WORKTREE_CREATE_BUDGET_S + _GIT_TIMEOUT_S
     monkeypatch.setattr(hw_mod, "_WORKTREE_TIMEOUT_S", 0.05)
 
@@ -326,7 +335,7 @@ async def test_create_worktree_outwaits_a_checkout_longer_than_the_short_bound(
     registry.register(
         host_id="host_slow_checkout",
         ws=_FakeWebSocket(),  # type: ignore[arg-type] — duck-typed
-        hello=_hello_frame(),
+        hello=_hello_frame([CAP_WORKTREE_CREATE_BUDGET]),
         owner=None,
     )
     conn = registry.get("host_slow_checkout")

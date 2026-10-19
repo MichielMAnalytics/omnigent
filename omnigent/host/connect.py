@@ -3812,14 +3812,13 @@ class HostProcess:
         :returns: Result frame with the worktree path and branch on
             success, or ``status: "failed"`` with an error message.
         """
+        # Older servers omit timeout_s and wait only 150 s; stay inside that.
+        timeout_s = frame.timeout_s if frame.timeout_s is not None else _GIT_TIMEOUT_S
         try:
             # Pause the orphan reaper: create_worktree runs git via
             # subprocess.run, whose children are direct children of this host
             # but not tracked runners — the reaper must not wait() them out
             # from under subprocess (#1782).
-            # A server that omits timeout_s gives up after 150 s; finishing within
-            # its old per-command bound keeps a late success from being stranded.
-            timeout_s = frame.timeout_s if frame.timeout_s is not None else _GIT_TIMEOUT_S
             with self._host_subprocess_op():
                 created = await asyncio.to_thread(
                     create_worktree,
@@ -3834,6 +3833,14 @@ class HostProcess:
                 request_id=frame.request_id,
                 status="failed",
                 error=exc.message,
+            )
+        except OSError as exc:
+            # Reply so the server does not wait out its whole create bound.
+            _logger.warning("Could not create worktree from %s", frame.repo_path, exc_info=True)
+            return HostCreateWorktreeResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error=f"host filesystem error: {exc}",
             )
         _logger.info(
             "Created worktree %s (branch %s) from %s",
