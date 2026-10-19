@@ -22,7 +22,7 @@ from omnigent.host.frames import (
     HostRemoveWorktreeFrame,
     encode_host_frame,
 )
-from omnigent.host.git_worktree import GIT_CHECKOUT_TIMEOUT_S
+from omnigent.host.git_worktree import WORKTREE_CREATE_BUDGET_S
 from omnigent.server.host_registry import HostConnection, HostRegistry
 
 _logger = logging.getLogger(__name__)
@@ -31,10 +31,9 @@ _logger = logging.getLogger(__name__)
 # surfaces instead of a generic server-side timeout.
 _WORKTREE_TIMEOUT_S: float = 150.0
 
-# A failing create runs three host git commands in sequence — fallback fetch,
-# checkout, rollback remove — each bounded by GIT_CHECKOUT_TIMEOUT_S, so the
-# server must outwait all three (plus margin) rather than abandon one midway.
-_WORKTREE_CREATE_TIMEOUT_S: float = 3 * GIT_CHECKOUT_TIMEOUT_S + 30.0
+# The host finishes a create within its budget, plus at most one trailing
+# metadata command or rollback; outwait that rather than strand a late success.
+_WORKTREE_CREATE_TIMEOUT_S: float = WORKTREE_CREATE_BUDGET_S + _WORKTREE_TIMEOUT_S
 
 
 WORKTREE_ROOT_LABEL_KEY = "omnigent.git.worktree_root_sha256"
@@ -218,9 +217,8 @@ async def create_worktree_on_host(
             branch_name=branch_name,
             base_branch=base_branch,
             existing_branch=existing_branch,
-            # Tell a new host the per-command bound this deadline is sized for;
-            # older hosts ignore the field and keep their own metadata bound.
-            checkout_timeout_s=GIT_CHECKOUT_TIMEOUT_S,
+            # Older hosts ignore this and keep their per-command git bound.
+            timeout_s=WORKTREE_CREATE_BUDGET_S,
         )
     )
     result = await _await_host_worktree_result(

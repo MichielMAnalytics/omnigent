@@ -3817,14 +3817,9 @@ class HostProcess:
             # subprocess.run, whose children are direct children of this host
             # but not tracked runners — the reaper must not wait() them out
             # from under subprocess (#1782).
-            # An older server omits checkout_timeout_s; fall back to the legacy
-            # metadata bound so this host never outlives that server's shorter
-            # create deadline and strands a half-built worktree.
-            checkout_timeout_s = (
-                frame.checkout_timeout_s
-                if frame.checkout_timeout_s is not None
-                else _GIT_TIMEOUT_S
-            )
+            # A server that omits timeout_s gives up after 150 s; finishing within
+            # its old per-command bound keeps a late success from being stranded.
+            timeout_s = frame.timeout_s if frame.timeout_s is not None else _GIT_TIMEOUT_S
             with self._host_subprocess_op():
                 created = await asyncio.to_thread(
                     create_worktree,
@@ -3832,7 +3827,7 @@ class HostProcess:
                     branch_name=frame.branch_name,
                     base_branch=frame.base_branch,
                     existing_branch=frame.existing_branch,
-                    checkout_timeout_s=checkout_timeout_s,
+                    timeout_s=timeout_s,
                 )
         except WorktreeError as exc:
             return HostCreateWorktreeResultFrame(

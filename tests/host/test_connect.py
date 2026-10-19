@@ -3755,15 +3755,15 @@ def test_host_subprocess_op_guard_is_reentrant_and_balanced(tmp_path: Path) -> N
     assert host._owned_subprocess_ops == 0, "guard leaked a ref on exception — reaper wedged"
 
 
-async def test_handle_create_worktree_passes_server_supplied_checkout_bound(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("frame_timeout_s", "expected_timeout_s"),
+    [(1234.0, 1234.0), (None, _GIT_TIMEOUT_S)],
+    ids=["server-budget", "legacy-server"],
+)
+async def test_handle_create_worktree_uses_server_budget_or_legacy_bound(
+    monkeypatch: pytest.MonkeyPatch, frame_timeout_s: float | None, expected_timeout_s: float
 ) -> None:
-    """A new host bounds its git commands by the server-supplied timeout.
-
-    The server advertises how long it will wait; the host threads that into
-    create_worktree so a large repo's slow checkout outlasts the metadata
-    bound without the server abandoning a still-running create.
-    """
+    """The host spends the budget the server sent, or stays within an older server's deadline."""
     host = _make_host_process()
     captured: dict[str, object] = {}
 
@@ -3778,41 +3778,13 @@ async def test_handle_create_worktree_passes_server_supplied_checkout_bound(
             request_id="r1",
             repo_path="/repo",
             branch_name="feature/login",
-            checkout_timeout_s=1234.0,
+            timeout_s=frame_timeout_s,
         )
     )
 
     assert isinstance(result, HostCreateWorktreeResultFrame)
     assert result.status == "ok"
-    assert captured["checkout_timeout_s"] == 1234.0
-
-
-async def test_handle_create_worktree_without_server_timeout_keeps_legacy_bound(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A legacy server omits the timeout; the new host keeps the metadata bound.
-
-    Protocol regression for mixed-version deploys: a new host paired with an
-    old server (no ``checkout_timeout_s``) must not let a slow checkout outlive
-    that server's shorter create deadline, so it falls back to the legacy git
-    bound instead of the generous one.
-    """
-    host = _make_host_process()
-    captured: dict[str, object] = {}
-
-    def _fake_create_worktree(**kwargs: object) -> CreatedWorktree:
-        captured.update(kwargs)
-        return CreatedWorktree(worktree_path="/wt", branch="wip", workspace="/wt")
-
-    monkeypatch.setattr("omnigent.host.connect.create_worktree", _fake_create_worktree)
-
-    result = await host._handle_create_worktree(
-        HostCreateWorktreeFrame(request_id="r2", repo_path="/repo", branch_name="wip")
-    )
-
-    assert isinstance(result, HostCreateWorktreeResultFrame)
-    assert result.status == "ok"
-    assert captured["checkout_timeout_s"] == _GIT_TIMEOUT_S
+    assert captured["timeout_s"] == expected_timeout_s
 
 
 def test_reap_orphans_is_noop_without_wnohang(
