@@ -87,7 +87,7 @@ from omnigent.host.frames import (
     decode_host_frame,
     encode_host_frame,
 )
-from omnigent.host.git_worktree import _GIT_TIMEOUT_S, CreatedWorktree
+from omnigent.host.git_worktree import CreatedWorktree
 from omnigent.host.identity import HostIdentity
 from omnigent.host.maintenance import HostMaintenanceJanitor
 from omnigent.host.runner_zygote import ZygoteUnavailable
@@ -3759,7 +3759,7 @@ def test_host_subprocess_op_guard_is_reentrant_and_balanced(tmp_path: Path) -> N
 
 @pytest.mark.parametrize(
     ("frame_timeout_s", "expected_timeout_s"),
-    [(1234.0, 1234.0), (None, _GIT_TIMEOUT_S)],
+    [(1234.0, 1234.0), (None, 120.0)],
     ids=["server-budget", "legacy-server"],
 )
 async def test_handle_create_worktree_uses_server_budget_or_legacy_bound(

@@ -125,7 +125,6 @@ from omnigent.host.frames import (
     workspace_missing_message,
 )
 from omnigent.host.git_worktree import (
-    _GIT_TIMEOUT_S,
     WorktreeError,
     create_worktree,
     list_worktrees,
@@ -215,6 +214,9 @@ if TYPE_CHECKING:
 
 # Workspaces whose fs reader (and change registry) stay warm between requests.
 _FS_READER_CACHE_SIZE = 8
+
+# Older servers omit a create's timeout_s and wait 150 s for its reply.
+_LEGACY_SERVER_CREATE_BUDGET_S = 120.0
 
 _logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -3812,8 +3814,9 @@ class HostProcess:
         :returns: Result frame with the worktree path and branch on
             success, or ``status: "failed"`` with an error message.
         """
-        # Older servers omit timeout_s and wait only 150 s; stay inside that.
-        timeout_s = frame.timeout_s if frame.timeout_s is not None else _GIT_TIMEOUT_S
+        timeout_s = (
+            frame.timeout_s if frame.timeout_s is not None else _LEGACY_SERVER_CREATE_BUDGET_S
+        )
         try:
             # Pause the orphan reaper: create_worktree runs git via
             # subprocess.run, whose children are direct children of this host
