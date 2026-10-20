@@ -7866,6 +7866,10 @@ def _native_terminal_start_failure_cause(exc: BaseException) -> str:
     return class_name
 
 
+# Bounds the list so typical messages keep their error ID in the persisted error label.
+_ALLOWED_MODELS_SHOWN = 3
+
+
 def _native_terminal_configuration_message(exc: BaseException) -> str | None:
     """
     Return the client-safe remedy for a start failure only the user can fix.
@@ -7874,10 +7878,10 @@ def _native_terminal_configuration_message(exc: BaseException) -> str | None:
     :returns: The message to show verbatim, or ``None`` for other failures.
     """
     if isinstance(exc, ModelNotAllowedError):
-        if not exc.allowed_models:
-            return f"{exc.message}."
-        allowed_models = ", ".join(exc.allowed_models)
-        return f"{exc.message}. Switch this session to an allowed model: {allowed_models}."
+        shown = ", ".join(exc.allowed_models[:_ALLOWED_MODELS_SHOWN]) or "none"
+        hidden = len(exc.allowed_models) - _ALLOWED_MODELS_SHOWN
+        more = f", and {hidden} more" if hidden > 0 else ""
+        return f"{exc.message}. Allowed models: {shown}{more}."
     if isinstance(exc, OmnigentError) and exc.code == ErrorCode.HARNESS_NOT_CONFIGURED:
         return exc.message
     return None

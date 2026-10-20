@@ -19,6 +19,7 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
+from omnigent.db.db_models import LABEL_VALUE_MAX_LEN
 from omnigent.debug_logging import record_to_row
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harnesses.codex_native.launch_args import CodexTransportArgsError
@@ -289,7 +290,6 @@ def test_outdated_pi_cli_surfaces_its_actionable_message() -> None:
         ),
         (CodexTransportArgsError("app-server"), "Codex"),
         (_MODEL_OUTSIDE_ALLOWLIST, "Codex"),
-        (ModelNotAllowedError("system.ai.gpt-6-astra", "codex-native", ()), "Codex"),
     ],
 )
 def test_host_setup_error_surfaces_its_remedy(
@@ -544,5 +544,29 @@ def test_codex_pin_outside_model_allowlist_names_the_allowed_models() -> None:
     assert payload["code"] == ErrorCode.HARNESS_NOT_CONFIGURED
     assert payload["message"].startswith(
         f"Model {pinned_model!r} is not in the configured model list for 'codex-native'. "
-        f"Switch this session to an allowed model: {_ALLOWED_CODEX_MODEL}. Error ID: "
+        f"Allowed models: {_ALLOWED_CODEX_MODEL}. Error ID: "
     ), payload["message"]
+
+
+_FIVE_MODELS = tuple(f"system.ai.gpt-5-{minor}-sol" for minor in range(1, 6))
+
+
+@pytest.mark.parametrize(
+    ("allowed_models", "expected_list"),
+    [
+        ((), "none"),
+        (_FIVE_MODELS[:3], ", ".join(_FIVE_MODELS[:3])),
+        (_FIVE_MODELS, f"{', '.join(_FIVE_MODELS[:3])}, and 2 more"),
+    ],
+)
+def test_model_outside_allowlist_names_at_most_three_models(
+    allowed_models: tuple[str, ...], expected_list: str
+) -> None:
+    """A long model list stays short enough to keep the error ID in the persisted label."""
+    exc = ModelNotAllowedError("system.ai.gpt-6-astra", "codex-native", allowed_models)
+    payload = _native_terminal_start_error_payload(exc, "Codex", session_id="conv_1")
+
+    assert payload["message"].startswith(
+        f"{exc.message}. Allowed models: {expected_list}. Error ID: "
+    ), payload["message"]
+    assert len(payload["message"]) <= LABEL_VALUE_MAX_LEN
