@@ -1008,7 +1008,7 @@ def test_declined_latch_recovers_when_bare_request_is_rejected(
         gen.send(httpx.Response(200))
 
 
-@pytest.mark.parametrize("refusal_status", [502, 401])
+@pytest.mark.parametrize("refusal_status", [502, 401, 403])
 def test_declined_latch_stays_bare_when_bare_request_succeeds(
     monkeypatch: pytest.MonkeyPatch,
     refusal_status: int,
@@ -1238,19 +1238,21 @@ def test_declined_latch_from_definitive_refusal_is_not_reset_on_rejection(
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("rejection_status", [401, 403])
 def test_managed_mint_factory_proxy_auth_failure_falls_through_to_sdk(
     monkeypatch: pytest.MonkeyPatch,
+    rejection_status: int,
 ) -> None:
-    """A 403 on the proxy bearer sets proxy_auth_failed → factory not installed."""
+    """A 401/403 on the proxy bearer sets proxy_auth_failed → factory not installed."""
     calls: list[int] = []
 
     def _proxy_rejects(*args: Any, **kwargs: Any) -> tuple[str, float]:
         calls.append(1)
         request = httpx.Request("POST", "https://s.example.com/v1/runners/r/token")
         raise httpx.HTTPStatusError(
-            "403",
+            str(rejection_status),
             request=request,
-            response=httpx.Response(403, request=request),
+            response=httpx.Response(rejection_status, request=request),
         )
 
     monkeypatch.setenv("RUNNER_SERVER_URL", "https://s.example.com")
