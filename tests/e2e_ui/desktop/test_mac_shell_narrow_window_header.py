@@ -35,8 +35,7 @@ _WINDOW_CONTROLS_STRIP = {"x": 0, "y": 0, "width": 88, "height": 48}
 
 
 def _intersects_window_controls(box: dict[str, float] | None) -> bool:
-    if box is None or box["width"] == 0 or box["height"] == 0:
-        return False
+    assert box is not None and box["width"] > 0 and box["height"] > 0, f"no rendered box: {box}"
     strip = _WINDOW_CONTROLS_STRIP
     return (
         box["x"] < strip["x"] + strip["width"]
@@ -95,6 +94,7 @@ def test_narrow_window_sidebar_header_stays_clear_of_window_controls(
     _hold_for_recording(page)
 
     brand = aside.get_by_test_id("sidebar-brand")
+    expect(brand).to_be_visible()
     assert not _intersects_window_controls(brand.bounding_box()), (
         f"sidebar wordmark {brand.bounding_box()} sits under the window controls"
     )

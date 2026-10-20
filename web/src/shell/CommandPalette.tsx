@@ -269,10 +269,9 @@ export function CommandPalette({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         aria-describedby={undefined}
-        // Mobile: a top-anchored full-screen sheet sized to the keyboard-aware
-        // visible viewport (--omnigent-viewport-height), so the input and results
-        // sit above the soft keyboard. sm:max-w-full overrides DialogContent's
-        // sm:max-w-sm between 640px and md. Desktop keeps the centered palette.
+        // Mobile: a top-anchored full-screen sheet sized to --omnigent-viewport-height,
+        // so the input and results sit above the soft keyboard. sm:max-w-full
+        // overrides DialogContent's sm:max-w-sm between 640px and md.
         className={cn(
           "overflow-hidden p-0",
           isMobile
