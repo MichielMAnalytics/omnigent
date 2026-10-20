@@ -21,7 +21,7 @@ import sys
 import time
 import urllib.parse
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, MutableMapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
@@ -7866,8 +7866,25 @@ def _native_terminal_start_failure_cause(exc: BaseException) -> str:
     return class_name
 
 
-# Bounds the list so typical messages keep their error ID in the persisted error label.
-_ALLOWED_MODELS_SHOWN = 3
+# The server keeps this many characters of a start error in the session's error label.
+_PERSISTED_ERROR_MESSAGE_MAX_LEN = 256
+_ERROR_ID_SUFFIX_LEN = len(f" Error ID: err_{'0' * 32}.")
+
+
+def _allowed_models_text(allowed_models: Sequence[str], budget: int) -> str:
+    """
+    List as many allowed models as fit in ``budget`` characters, and at least one.
+
+    :param allowed_models: Ordered model IDs, e.g. ``("model-a", "model-b")``.
+    :param budget: Characters available for the list, e.g. ``100``.
+    :returns: e.g. ``"model-a, and 1 more"``, or ``"none"`` for an empty list.
+    """
+    for count in range(len(allowed_models), 0, -1):
+        hidden = len(allowed_models) - count
+        text = ", ".join(allowed_models[:count]) + (f", and {hidden} more" if hidden else "")
+        if count == 1 or len(text) <= budget:
+            return text
+    return "none"
 
 
 def _native_terminal_configuration_message(exc: BaseException) -> str | None:
@@ -7878,10 +7895,9 @@ def _native_terminal_configuration_message(exc: BaseException) -> str | None:
     :returns: The message to show verbatim, or ``None`` for other failures.
     """
     if isinstance(exc, ModelNotAllowedError):
-        shown = ", ".join(exc.allowed_models[:_ALLOWED_MODELS_SHOWN]) or "none"
-        hidden = len(exc.allowed_models) - _ALLOWED_MODELS_SHOWN
-        more = f", and {hidden} more" if hidden > 0 else ""
-        return f"{exc.message}. Allowed models: {shown}{more}."
+        prefix = f"{exc.message}. Allowed models: "
+        budget = _PERSISTED_ERROR_MESSAGE_MAX_LEN - _ERROR_ID_SUFFIX_LEN - len(prefix) - len(".")
+        return f"{prefix}{_allowed_models_text(exc.allowed_models, budget)}."
     if isinstance(exc, OmnigentError) and exc.code == ErrorCode.HARNESS_NOT_CONFIGURED:
         return exc.message
     return None

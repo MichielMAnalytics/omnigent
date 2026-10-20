@@ -39,6 +39,10 @@ _ALLOWED_CODEX_MODEL = "system.ai.gpt-5-6-sol"
 _MODEL_OUTSIDE_ALLOWLIST = ModelNotAllowedError(
     "system.ai.gpt-6-astra", "codex-native", (_ALLOWED_CODEX_MODEL,)
 )
+_SHORT_MODELS = tuple(f"system.ai.gpt-5-{minor}-sol" for minor in range(1, 6))
+_LONG_MODELS = tuple(
+    f"gateway/openai/gpt-5-{minor}-codex-max-preview-2026" for minor in range(1, 6)
+)
 
 
 def test_missing_session_agent_classified_as_lifecycle_condition() -> None:
@@ -548,21 +552,24 @@ def test_codex_pin_outside_model_allowlist_names_the_allowed_models() -> None:
     ), payload["message"]
 
 
-_FIVE_MODELS = tuple(f"system.ai.gpt-5-{minor}-sol" for minor in range(1, 6))
+def test_persisted_error_budget_matches_session_label_width() -> None:
+    """The runner's message budget tracks the server's error-label column."""
+    assert orchestration._PERSISTED_ERROR_MESSAGE_MAX_LEN == LABEL_VALUE_MAX_LEN
 
 
 @pytest.mark.parametrize(
     ("allowed_models", "expected_list"),
     [
         ((), "none"),
-        (_FIVE_MODELS[:3], ", ".join(_FIVE_MODELS[:3])),
-        (_FIVE_MODELS, f"{', '.join(_FIVE_MODELS[:3])}, and 2 more"),
+        (_SHORT_MODELS[:3], ", ".join(_SHORT_MODELS[:3])),
+        (_SHORT_MODELS, f"{', '.join(_SHORT_MODELS[:4])}, and 1 more"),
+        (_LONG_MODELS, f"{', '.join(_LONG_MODELS[:2])}, and 3 more"),
     ],
 )
-def test_model_outside_allowlist_names_at_most_three_models(
+def test_model_outside_allowlist_lists_models_that_fit_the_error_label(
     allowed_models: tuple[str, ...], expected_list: str
 ) -> None:
-    """A long model list stays short enough to keep the error ID in the persisted label."""
+    """The allowed list is shortened so the persisted label keeps the error ID."""
     exc = ModelNotAllowedError("system.ai.gpt-6-astra", "codex-native", allowed_models)
     payload = _native_terminal_start_error_payload(exc, "Codex", session_id="conv_1")
 
@@ -570,3 +577,11 @@ def test_model_outside_allowlist_names_at_most_three_models(
         f"{exc.message}. Allowed models: {expected_list}. Error ID: "
     ), payload["message"]
     assert len(payload["message"]) <= LABEL_VALUE_MAX_LEN
+
+
+def test_oversized_rejected_model_still_names_an_allowed_model() -> None:
+    """A rejected ID too long for the label still leaves a remedy in the live message."""
+    exc = ModelNotAllowedError("gateway/" + "x" * 240, "codex-native", ("model-a", "model-b"))
+    payload = _native_terminal_start_error_payload(exc, "Codex", session_id="conv_1")
+
+    assert payload["message"].startswith(f"{exc.message}. Allowed models: model-a, and 1 more.")
