@@ -824,9 +824,8 @@ def _make_managed_mint_factory(
         ``None`` thereafter, and :class:`_RunnerDatabricksAuth` falls back to
         bare requests. A post-install 401/403 with no still-valid cache
         latches ``proxy_auth_failed`` instead, which
-        :class:`_InitialAuthTokenFactory` answers by re-resolving SDK/OIDC —
-        unless the factory never held a proxy bearer: then it latches a
-        recoverable ``declined``. A probe-time 401/403 still drops the factory.
+        :class:`_InitialAuthTokenFactory` answers by re-resolving SDK/OIDC.
+        A bearer-less 401/403 latches a recoverable ``declined``.
     """
     from omnigent.runner.identity import token_bound_runner_id
 
@@ -852,8 +851,8 @@ def _make_managed_mint_factory(
         # the latch and re-mints once the server is reachable again —
         # dropping the factory here would lose that recovery path.
         return factory
-    # Launches bind the session before starting the runner, so a probe 401/403
-    # is a real refusal; the boot-time app and tunnel clients then stay bare.
+    # A probe 401/403 still drops the factory, leaving the boot-time app and
+    # tunnel clients bare; host launches bind the session before the runner starts.
     if factory.declined or factory.proxy_auth_failed:
         return None
     return factory
