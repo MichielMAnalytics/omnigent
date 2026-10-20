@@ -683,7 +683,7 @@ async def test_launch_native_terminal_publishes_model_outside_allowlist_without_
     assert result is False
     failed = next(event for event in events if event.get("status") == "failed")
     assert failed["error"]["code"] == ErrorCode.HARNESS_NOT_CONFIGURED
-    assert "Allowed models: model-a." in failed["error"]["message"]
+    assert "Allowed models: 'model-a'." in failed["error"]["message"]
     assert all(record.exc_info is None for record in caplog.records)
 
 

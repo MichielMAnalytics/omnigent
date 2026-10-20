@@ -7873,15 +7873,16 @@ _ERROR_ID_SUFFIX_LEN = len(f" Error ID: err_{'0' * 32}.")
 
 def _allowed_models_text(allowed_models: Sequence[str], budget: int) -> str:
     """
-    List as many allowed models as fit in ``budget`` characters, and at least one.
+    List as many quoted allowed models as fit in ``budget`` characters, and at least one.
 
     :param allowed_models: Ordered model IDs, e.g. ``("model-a", "model-b")``.
     :param budget: Characters available for the list, e.g. ``100``.
-    :returns: e.g. ``"model-a, and 1 more"``, or ``"none"`` for an empty list.
+    :returns: e.g. ``"'model-a', and 1 more"``, or ``"none"`` for an empty list.
     """
-    for count in range(len(allowed_models), 0, -1):
-        hidden = len(allowed_models) - count
-        text = ", ".join(allowed_models[:count]) + (f", and {hidden} more" if hidden else "")
+    quoted = [repr(model) for model in allowed_models]
+    for count in range(len(quoted), 0, -1):
+        hidden = len(quoted) - count
+        text = ", ".join(quoted[:count]) + (f", and {hidden} more" if hidden else "")
         if count == 1 or len(text) <= budget:
             return text
     return "none"

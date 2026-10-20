@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from playwright.sync_api import Page, expect
 from omnigent.config import global_config_path
 from tests._helpers.live_server import terminate_process
 from tests._helpers.native_session import create_native_session
+from tests._helpers.polling import poll_until
 from tests.e2e_ui.conftest import (
     _bind_session_runner,
     _ensure_runner_online,
@@ -90,14 +90,10 @@ def test_codex_native_pin_outside_model_allowlist_names_allowed_models(
                 expect(page.get_by_label("Message the agent")).to_be_visible(timeout=60_000)
                 _bind_session_runner(live_server, session_id, runner_id)
 
-                launch_error: str | None = None
-                deadline = time.monotonic() + _OUTCOME_TIMEOUT_S
-                while launch_error is None and time.monotonic() < deadline:
-                    time.sleep(2.0)
-                    launch_error = _launch_error(live_server, session_id)
-                assert launch_error is not None, (
-                    f"Codex did not report a startup failure for {_PINNED_MODEL!r} "
-                    f"within {_OUTCOME_TIMEOUT_S:.0f}s"
+                poll_until(
+                    lambda: _launch_error(live_server, session_id) is not None,
+                    timeout_s=_OUTCOME_TIMEOUT_S,
+                    interval_s=2.0,
                 )
 
                 pill = page.locator(_ERROR_PILL).first
@@ -105,7 +101,7 @@ def test_codex_native_pin_outside_model_allowlist_names_allowed_models(
                 page.locator(_ERROR_HEADLINE).first.click()
                 expect(pill).to_contain_text(
                     f"Model '{_PINNED_MODEL}' is not in the configured model list for "
-                    f"'codex-native'. Allowed models: {_ALLOWED_MODEL}.",
+                    f"'codex-native'. Allowed models: '{_ALLOWED_MODEL}'.",
                     timeout=10_000,
                 )
                 expect(pill).not_to_contain_text("see the runner log")

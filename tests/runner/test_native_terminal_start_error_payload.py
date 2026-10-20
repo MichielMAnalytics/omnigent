@@ -549,7 +549,7 @@ def test_codex_pin_outside_model_allowlist_names_the_allowed_models() -> None:
     assert payload["code"] == ErrorCode.HARNESS_NOT_CONFIGURED
     assert payload["message"].startswith(
         f"Model {pinned_model!r} is not in the configured model list for 'codex-native'. "
-        f"Allowed models: {_ALLOWED_CODEX_MODEL}. Error ID: "
+        f"Allowed models: '{_ALLOWED_CODEX_MODEL}'. Error ID: "
     ), payload["message"]
 
 
@@ -562,9 +562,9 @@ def test_persisted_error_budget_matches_session_label_width() -> None:
     ("allowed_models", "expected_list"),
     [
         ((), "none"),
-        (_SHORT_MODELS[:3], ", ".join(_SHORT_MODELS[:3])),
-        (_SHORT_MODELS, f"{', '.join(_SHORT_MODELS[:4])}, and 1 more"),
-        (_LONG_MODELS, f"{', '.join(_LONG_MODELS[:2])}, and 3 more"),
+        (_SHORT_MODELS[:3], ", ".join(map(repr, _SHORT_MODELS[:3]))),
+        (_SHORT_MODELS, f"{', '.join(map(repr, _SHORT_MODELS[:3]))}, and 2 more"),
+        (_LONG_MODELS, f"{_LONG_MODELS[0]!r}, and 4 more"),
     ],
 )
 def test_model_outside_allowlist_lists_models_that_fit_the_error_label(
@@ -581,10 +581,40 @@ def test_model_outside_allowlist_lists_models_that_fit_the_error_label(
 
 
 @pytest.mark.parametrize(
+    ("message_len", "payload_len", "kept_start"),
+    [(207, 255, "Model "), (208, 256, "Model "), (209, 256, "…")],
+)
+def test_model_outside_allowlist_message_keeps_its_start_up_to_the_label_width(
+    message_len: int, payload_len: int, kept_start: str
+) -> None:
+    """A message keeps its start while it and the error ID fit the label, and not after."""
+    unpadded = orchestration._native_terminal_configuration_message(
+        ModelNotAllowedError("", "codex-native", ("model-a",))
+    )
+    assert unpadded is not None
+    exc = ModelNotAllowedError("x" * (message_len - len(unpadded)), "codex-native", ("model-a",))
+    message = _native_terminal_start_error_payload(exc, "Codex", session_id="conv_1")["message"]
+
+    assert len(message) == payload_len
+    assert message.startswith(kept_start)
+    assert _truncate_error_message_label(message) == message
+
+
+def test_allowed_model_ids_are_quoted_with_control_characters_escaped() -> None:
+    """A configured model ID can't start a new line in the message or its log record."""
+    exc = ModelNotAllowedError("system.ai.gpt-6-astra", "codex-native", ("model-a\nforged",))
+    message = orchestration._native_terminal_configuration_message(exc)
+
+    assert message is not None
+    assert "\n" not in message
+    assert message.endswith(r"Allowed models: 'model-a\nforged'.")
+
+
+@pytest.mark.parametrize(
     ("rejected_model", "allowed_models", "kept_ending"),
     [
-        ("gateway/" + "x" * 240, ("model-a", "model-b"), "Allowed models: model-a, and 1 more."),
-        ("system.ai.gpt-6-astra", ("gateway/" + "y" * 240,), "y" * 100 + "."),
+        ("gateway/" + "x" * 240, ("model-a", "model-b"), "Allowed models: 'model-a', and 1 more."),
+        ("system.ai.gpt-6-astra", ("gateway/" + "y" * 240,), "y" * 100 + "'."),
     ],
 )
 def test_oversized_model_id_keeps_the_error_id_in_the_persisted_label(
