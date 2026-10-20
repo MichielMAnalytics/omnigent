@@ -776,9 +776,7 @@ html[data-electron-mac] {
   html[data-electron-mac] .app-shell .canvas-page-heading {
     padding-left: 1.5rem;
   }
-  /* md+: matches the sidebar's own desktop breakpoint. Below md the phone
-   * layout takes over; the (width < 48rem) block after the cluster rules
-   * handles that band.
+  /* md+: matches the sidebar's own desktop breakpoint.
    *
    * The sidebar starts at the window's top edge rather than below the lights, so
    * no band of empty canvas sits above it. The title-bar row itself is NOT the
@@ -830,13 +828,10 @@ html[data-electron-mac] {
     display: none;
   }
 }
-/* The settings sidebar's "Back" row would sit under the traffic lights at any
- * width (below md the drawer is full-bleed from the top edge). It has no cluster
- * to align beside the lights, so it clears them vertically instead. */
+/* The settings sidebar's "Back" row, docked or in the phone drawer, has no
+ * cluster to align beside the lights, so it clears them vertically instead. */
 html[data-electron-mac] .settings-sidebar-header {
   padding-top: calc(var(--mac-titlebar-height) + 0.5rem);
-}
-@media (min-width: 48rem) {
 }
 /* Match the full desktop header; controls opt out of dragging below. */
 html[data-electron-mac] .electron-drag-strip {
@@ -877,27 +872,24 @@ html[data-electron-mac] .electron-sidebar-header-actions {
 html[data-electron-mac] .traffic-light-clearance {
   padding-left: calc(var(--mac-traffic-light-width) + 5rem);
 }
-/* Below md the phone layout already carries these controls: hide the title-bar
- * cluster and pad the chat header and the full-bleed drawer's header row past
- * the lights (the row keeps its phone height, level with the chat header's). */
+/* A maximized rail reaches the same window corner while the sidebar is closed.
+ * Once the sidebar opens, the rail starts to its right and needs no clearance. */
+html[data-electron-mac]
+  .app-shell:not([data-sidebar-open])
+  aside[aria-label="Workspace"][data-maximized]
+  .workspace-tab-strip {
+  padding-left: calc(var(--mac-traffic-light-width) + 5rem);
+}
+/* Below md the phone header and drawer carry their own controls, so drop the
+ * title-bar cluster and start those headers right of the lights. */
 @media (width < 48rem) {
   html[data-electron-mac] .electron-sidebar-header-actions {
     display: none;
   }
   html[data-electron-mac] .traffic-light-clearance,
   html[data-electron-mac] .sidebar-header-row {
-    padding-left: 5.5rem;
+    padding-left: var(--mac-traffic-light-width);
   }
-}
-/* A maximized rail reaches the window's top-left corner while the sidebar is
- * closed, so its tab strip must clear both the traffic lights and the title-bar
- * cluster. Once the sidebar opens, the rail starts to its right and needs no
- * clearance. */
-html[data-electron-mac]
-  .app-shell:not([data-sidebar-open])
-  aside[aria-label="Workspace"][data-maximized]
-  .workspace-tab-strip {
-  padding-left: calc(var(--mac-traffic-light-width) + 5rem);
 }
 /* Drag regions ignore z-order, so controls and overlays need counter-regions.
  * Scoped from <html> to cover portals outside AppShell on macOS only. */
