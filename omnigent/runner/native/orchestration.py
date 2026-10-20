@@ -7895,9 +7895,11 @@ def _native_terminal_configuration_message(exc: BaseException) -> str | None:
     :returns: The message to show verbatim, or ``None`` for other failures.
     """
     if isinstance(exc, ModelNotAllowedError):
+        budget = _PERSISTED_ERROR_MESSAGE_MAX_LEN - _ERROR_ID_SUFFIX_LEN
         prefix = f"{exc.message}. Allowed models: "
-        budget = _PERSISTED_ERROR_MESSAGE_MAX_LEN - _ERROR_ID_SUFFIX_LEN - len(prefix) - len(".")
-        return f"{prefix}{_allowed_models_text(exc.allowed_models, budget)}."
+        message = f"{prefix}{_allowed_models_text(exc.allowed_models, budget - len(prefix) - 1)}."
+        # The label keeps a message's start, so an oversized one gives up its start instead.
+        return message if len(message) <= budget else "…" + message[1 - budget :]
     if isinstance(exc, OmnigentError) and exc.code == ErrorCode.HARNESS_NOT_CONFIGURED:
         return exc.message
     return None

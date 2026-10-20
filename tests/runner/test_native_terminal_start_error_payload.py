@@ -32,6 +32,7 @@ from omnigent.runner.native.orchestration import (
     _native_terminal_start_error_response,
     _publish_native_terminal_start_error,
 )
+from omnigent.server.routes._sessions.helpers import _truncate_error_message_label
 from omnigent.terminals.registry import TerminalExitedDuringLaunch
 
 _ERROR_ID_RE = re.compile(r" Error ID: (err_[0-9a-f]{32})\.$")
@@ -579,9 +580,22 @@ def test_model_outside_allowlist_lists_models_that_fit_the_error_label(
     assert len(payload["message"]) <= LABEL_VALUE_MAX_LEN
 
 
-def test_oversized_rejected_model_still_names_an_allowed_model() -> None:
-    """A rejected ID too long for the label still leaves a remedy in the live message."""
-    exc = ModelNotAllowedError("gateway/" + "x" * 240, "codex-native", ("model-a", "model-b"))
-    payload = _native_terminal_start_error_payload(exc, "Codex", session_id="conv_1")
+@pytest.mark.parametrize(
+    ("rejected_model", "allowed_models", "kept_ending"),
+    [
+        ("gateway/" + "x" * 240, ("model-a", "model-b"), "Allowed models: model-a, and 1 more."),
+        ("system.ai.gpt-6-astra", ("gateway/" + "y" * 240,), "y" * 100 + "."),
+    ],
+)
+def test_oversized_model_id_keeps_the_error_id_in_the_persisted_label(
+    rejected_model: str, allowed_models: tuple[str, ...], kept_ending: str
+) -> None:
+    """An oversized model ID gives up the message's start, not its remedy or error ID."""
+    exc = ModelNotAllowedError(rejected_model, "codex-native", allowed_models)
+    message = _native_terminal_start_error_payload(exc, "Codex", session_id="conv_1")["message"]
 
-    assert payload["message"].startswith(f"{exc.message}. Allowed models: model-a, and 1 more.")
+    assert _truncate_error_message_label(message) == message
+    assert message.startswith("…")
+    error_id = _ERROR_ID_RE.search(message)
+    assert error_id is not None, message
+    assert message[: error_id.start()].endswith(kept_ending), message
