@@ -134,6 +134,7 @@ def test_singleton_allowlist_remains_restricted_and_keeps_literal_id() -> None:
     with pytest.raises(ModelNotAllowedError, match="configured model list") as rejected:
         resolve_bound_model(config, "codex", "model-a")
     assert rejected.value.code == ErrorCode.INVALID_INPUT
+    assert rejected.value.http_status == 400
     assert rejected.value.allowed_models == (model,)
     provider = resolve_bound_provider(config, "codex")
     assert provider is not None
