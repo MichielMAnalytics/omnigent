@@ -388,18 +388,14 @@ class _RunnerDatabricksAuth(ThreadedAuth):
             token, declined = _call_factory_with_declined(self._factory)
             if not token:
                 if declined:
-                    # The mint path declined for this runner (HTTP 400/404
-                    # no-auth/header mode, a 5xx from an intermediary, or a
-                    # 401/403 before the runner held any bearer).
-                    # Bare requests are correct on a no-auth server; do NOT
-                    # fail closed or the runner bricks every callback.
+                    # The mint declined (400/404 no-auth, intermediary 5xx, or a
+                    # pre-bearer 401/403): send bare, since failing closed here
+                    # would brick every callback on a no-auth server.
                     response = yield request
                     if not _is_login_redirect_or_unauthorized(response):
                         return
-                    # The bare request was rejected, so the server DOES
-                    # require auth and a recoverable decline (intermediary
-                    # 5xx, or no session bound yet) was wrong: re-mint. A
-                    # genuine no-auth refusal (400/404) must not re-probe.
+                    # Rejected bare: the server needs auth, so re-mint after a
+                    # recoverable decline; a 400/404 refusal must not re-probe.
                     if not _reset_recoverable_decline(self._factory):
                         return
                     token = self._factory()
@@ -830,7 +826,7 @@ def _make_managed_mint_factory(
         latches ``proxy_auth_failed`` instead, which
         :class:`_InitialAuthTokenFactory` answers by re-resolving SDK/OIDC —
         unless the factory never held a proxy bearer: then it latches a
-        recoverable ``declined`` like the 5xx case above.
+        recoverable ``declined``. A probe-time 401/403 still drops the factory.
     """
     from omnigent.runner.identity import token_bound_runner_id
 
