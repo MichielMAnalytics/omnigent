@@ -9,6 +9,7 @@ import os
 import ssl
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import SimpleNamespace, TracebackType
 from typing import Any, TypedDict
@@ -444,13 +445,13 @@ class _NoBearerMintDeclineFactory:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "factory",
-    [lambda: None, _NoBearerMintDeclineFactory()],
+    "make_factory",
+    [lambda: lambda: None, _NoBearerMintDeclineFactory],
     ids=["no-token", "no-bearer-mint-decline"],
 )
 async def test_serve_tunnel_no_credential_error_after_streak(
     monkeypatch: pytest.MonkeyPatch,
-    factory: Any,
+    make_factory: Callable[[], Any],
 ) -> None:
     """Repeated 401s on bearer-less upgrades end in the no-credential error.
 
@@ -458,7 +459,7 @@ async def test_serve_tunnel_no_credential_error_after_streak(
     A no-bearer mint decline is still a missing credential, not a no-auth server.
 
     :param monkeypatch: Pytest monkeypatch fixture.
-    :param factory: Token source that never yields a bearer.
+    :param make_factory: Builds a token source that never yields a bearer.
     :returns: None.
     """
     from omnigent.runner.transports.ws_tunnel.serve import (
@@ -496,7 +497,7 @@ async def test_serve_tunnel_no_credential_error_after_streak(
             server_url="https://ws.cloud.databricks.com/api/2.0/omnigent?o=123",
             runner_id="runner_no_credential",
             runner_version="0.1.0",
-            auth_token_factory=factory,
+            auth_token_factory=make_factory(),
         )
 
     message = str(exc_info.value)

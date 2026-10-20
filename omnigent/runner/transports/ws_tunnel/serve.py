@@ -651,12 +651,8 @@ async def serve_tunnel(
                             f"{http_auth_rejection_streak} attempts); "
                             f"{_reauth_hint(server_url)}"
                         ) from exc
-                    # Invalidate the cached token so the loop-top _refresh_auth_token
-                    # fetches a fresh one on the next attempt. The loop-top call is
-                    # already guarded against transient factory errors (OSError etc.),
-                    # so we don't call the factory directly here. Also clear a
-                    # recoverable mint decline: the rejection proves the server
-                    # requires auth, so the next refresh must re-mint.
+                    # The rejection proves the server requires auth: drop the cached token
+                    # and any recoverable mint decline so the guarded loop-top refresh re-mints.
                     await asyncio.to_thread(_prepare_auth_retry, auth_token_factory)
                     retry_reason = f"HTTP {http_status}; retrying with refreshed token"
                     if ever_connected:
@@ -890,14 +886,9 @@ def _invalidate_auth_token_factory(factory: Callable[[], str | None] | None) -> 
 
 
 def _reset_recoverable_decline(factory: Callable[[], str | None] | None) -> bool:
-    """Clear a mint decline that a re-auth rejection has disproved.
+    """Clear a 5xx or bearer-less 401/403 mint decline after a re-auth rejection.
 
-    The request was rejected with a re-auth signal, so the server DOES
-    require auth. A decline latched while the server was unreachable (a
-    5xx answered for the mint endpoint) or before it would mint for this
-    runner (a 401/403 when the runner had no bearer yet) is wrong.
-    Clearing it lets the next refresh re-mint. A genuine no-auth refusal
-    (HTTP 400/404) stays latched.
+    Definitive 400/404 declines stay latched.
 
     :param factory: Runner token factory, or ``None``.
     :returns: ``True`` when a decline was cleared.

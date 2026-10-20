@@ -554,9 +554,11 @@ def test_managed_runner_recovers_when_session_binds_after_mint_401(
 
     unbound = asyncio.run(_get_agent_contents(base_url, contents_path, auth))
     assert unbound.status_code == 401, (unbound.status_code, unbound.text)
+    assert factory.declined_without_proxy_bearer is True
 
     _bind_managed_runner(db_uri, session_id)
     bound = asyncio.run(_get_agent_contents(base_url, contents_path, auth))
     assert bound.status_code == 200, (bound.status_code, bound.text)
     assert bound.content[:2] == b"\x1f\x8b", "expected a gzip agent bundle body"
     assert factory.declined is False
+    assert factory.declined_without_proxy_bearer is False

@@ -992,6 +992,7 @@ def test_declined_latch_recovers_when_bare_request_is_rejected(
     )
     assert factory() is None
     assert factory.declined is True
+    assert factory.declined_without_proxy_bearer is (refusal_status != 502)
 
     auth = _RunnerDatabricksAuth(factory)
     request = httpx.Request("GET", "http://server/v1/sessions/conv_1/agent/contents")
@@ -1004,6 +1005,7 @@ def test_declined_latch_recovers_when_bare_request_is_rejected(
     retried = gen.send(httpx.Response(401))
     assert retried.headers.get("Authorization") == "Bearer jwt-recovered"
     assert factory.declined is False
+    assert factory.declined_without_proxy_bearer is False
     with pytest.raises(StopIteration):
         gen.send(httpx.Response(200))
 
@@ -1281,8 +1283,10 @@ def test_managed_mint_factory_proxy_auth_failure_falls_through_to_sdk(
     assert installed is None
 
 
+@pytest.mark.parametrize("rejection_status", [401, 403])
 def test_initial_host_token_re_resolves_to_sdk_when_proxy_auth_fails(
     monkeypatch: pytest.MonkeyPatch,
+    rejection_status: int,
 ) -> None:
     """When managed mint proxy_auth_fails, _InitialAuthTokenFactory falls back to SDK/OIDC."""
 
@@ -1296,7 +1300,9 @@ def test_initial_host_token_re_resolves_to_sdk_when_proxy_auth_fails(
     def _proxy_rejects(*args: Any, **kwargs: Any) -> tuple[str, float]:
         request = httpx.Request("POST", "https://app.databricksapps.com/v1/runners/r/token")
         raise httpx.HTTPStatusError(
-            "403", request=request, response=httpx.Response(403, request=request)
+            "rejected",
+            request=request,
+            response=httpx.Response(rejection_status, request=request),
         )
 
     monkeypatch.setenv("RUNNER_SERVER_URL", "https://app.databricksapps.com")
@@ -1314,7 +1320,7 @@ def test_initial_host_token_re_resolves_to_sdk_when_proxy_auth_fails(
     factory.invalidate()
 
     # The fallback tries managed mint first (proxy bearer = expired-host-bearer).
-    # That 403s → proxy_auth_failed → re-resolves to SDK/OIDC.
+    # That 401/403s → proxy_auth_failed → re-resolves to SDK/OIDC.
     token = factory()
     assert token == "sdk-token"
 

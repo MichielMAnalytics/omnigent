@@ -852,6 +852,8 @@ def _make_managed_mint_factory(
         # the latch and re-mints once the server is reachable again —
         # dropping the factory here would lose that recovery path.
         return factory
+    # Launches bind the session before starting the runner, so a probe 401/403
+    # is a real refusal; the boot-time app and tunnel clients then stay bare.
     if factory.declined or factory.proxy_auth_failed:
         return None
     return factory
@@ -875,10 +877,8 @@ class _ManagedMintTokenFactory:
     :attr:`proxy_auth_failed` instead: the credential presented to the proxy
     died (the seeded host bearer, or the minted JWT once a session outlives
     it), so callers should re-resolve SDK/OIDC rather than send bare requests.
-    With no proxy bearer, the factory assumes the server will not mint for
-    this runner yet (e.g. no session is bound to it), so it latches
-    :attr:`declined` and :attr:`declined_without_proxy_bearer`, recoverable
-    like a 5xx decline.
+    A bearer-less 401/403 may precede session binding, so it latches a
+    recoverable :attr:`declined` and :attr:`declined_without_proxy_bearer`.
     """
 
     def __init__(
