@@ -754,27 +754,31 @@ def test_managed_mint_factory_serves_cached_token_when_refresh_fails(
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize("refusal_status", [400, 401, 403])
 def test_managed_mint_factory_no_factory_when_server_definitively_refuses(
     monkeypatch: pytest.MonkeyPatch,
+    refusal_status: int,
 ) -> None:
-    """A definitive no-mint (HTTP 400/404) installs no factory → bare requests.
+    """A probe-time mint refusal installs no factory → bare requests.
 
     HTTP 400 (no auth provider / header mode) and 404 (an older server
     without the endpoint) mean the server will never mint for this runner,
     so the runner must fall back to unauthenticated requests — correct on a
-    no-auth server. No factory is installed.
+    no-auth server. A no-bearer 401/403 at the probe is dropped the same
+    way, so later lookups rediscover credentials. No factory is installed.
 
     :param monkeypatch: Pytest environment patch fixture.
+    :param refusal_status: The probe mint's HTTP status.
     :returns: None.
     """
 
     def _refuses(
         mint_url: str, server_url: str, binding_token: str, **_kw: object
     ) -> tuple[str, float]:
-        """Reject the mint the way a no-auth / header-mode server does (400)."""
+        """Reject the probe mint with the parametrized status."""
         request = httpx.Request("POST", mint_url)
         raise httpx.HTTPStatusError(
-            "unsupported", request=request, response=httpx.Response(400, request=request)
+            "refused", request=request, response=httpx.Response(refusal_status, request=request)
         )
 
     monkeypatch.setattr("omnigent.runner._entry._mint_managed_owner_token", _refuses)
@@ -1429,6 +1433,8 @@ def test_initial_host_token_fallback_recovers_from_no_bearer_mint_decline(
 
     With no SDK/OIDC credential, the fallback mint's 401 (no session bound yet)
     sends the callback bare and re-mints once the bare request is rejected.
+    Models the non-delegated launch path: an initial host bearer without
+    ``OMNIGENT_RUNNER_DELEGATED_AUTH``.
 
     :param monkeypatch: Pytest environment patch fixture.
     :returns: None.

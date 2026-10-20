@@ -424,15 +424,41 @@ async def test_serve_tunnel_fails_loud_on_http_auth_rejection(
     assert attempt == _HTTP_AUTH_REJECTION_FATAL_ATTEMPTS
 
 
+class _NoBearerMintDeclineFactory:
+    """Managed-mint stand-in whose bearer-less mint is refused on every attempt."""
+
+    def __init__(self) -> None:
+        self.declined = False
+        self.declined_by_server_error = False
+        self.declined_without_proxy_bearer = False
+
+    def __call__(self) -> str | None:
+        self.declined = True
+        self.declined_without_proxy_bearer = True
+        return None
+
+    def reset_decline(self) -> None:
+        self.declined = False
+        self.declined_without_proxy_bearer = False
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "factory",
+    [lambda: None, _NoBearerMintDeclineFactory()],
+    ids=["no-token", "no-bearer-mint-decline"],
+)
 async def test_serve_tunnel_no_credential_error_after_streak(
     monkeypatch: pytest.MonkeyPatch,
+    factory: Any,
 ) -> None:
     """Repeated 401s on bearer-less upgrades end in the no-credential error.
 
     The streak is kept so a transient mint failure still gets re-minted on retry.
+    A no-bearer mint decline is still a missing credential, not a no-auth server.
 
     :param monkeypatch: Pytest monkeypatch fixture.
+    :param factory: Token source that never yields a bearer.
     :returns: None.
     """
     from omnigent.runner.transports.ws_tunnel.serve import (
@@ -470,7 +496,7 @@ async def test_serve_tunnel_no_credential_error_after_streak(
             server_url="https://ws.cloud.databricks.com/api/2.0/omnigent?o=123",
             runner_id="runner_no_credential",
             runner_version="0.1.0",
-            auth_token_factory=lambda: None,
+            auth_token_factory=factory,
         )
 
     message = str(exc_info.value)

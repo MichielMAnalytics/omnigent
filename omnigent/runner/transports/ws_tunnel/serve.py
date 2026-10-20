@@ -624,7 +624,10 @@ async def serve_tunnel(
                         not ever_connected
                         and auth_token is None
                         and auth_token_factory is not None
-                        and not getattr(auth_token_factory, "declined", False)
+                        and (
+                            not getattr(auth_token_factory, "declined", False)
+                            or getattr(auth_token_factory, "declined_without_proxy_bearer", False)
+                        )
                         and http_auth_rejection_streak >= _HTTP_AUTH_REJECTION_FATAL_ATTEMPTS
                     ):
                         # Same streak as the rejection below: a transient mint

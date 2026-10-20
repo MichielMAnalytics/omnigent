@@ -875,10 +875,10 @@ class _ManagedMintTokenFactory:
     :attr:`proxy_auth_failed` instead: the credential presented to the proxy
     died (the seeded host bearer, or the minted JWT once a session outlives
     it), so callers should re-resolve SDK/OIDC rather than send bare requests.
-    With no proxy bearer, nothing presented could have expired: the server
-    will not mint for this runner yet (e.g. no session is bound to it), so
-    the factory latches :attr:`declined` and
-    :attr:`declined_without_proxy_bearer`, recoverable like a 5xx decline.
+    With no proxy bearer, the factory assumes the server will not mint for
+    this runner yet (e.g. no session is bound to it), so it latches
+    :attr:`declined` and :attr:`declined_without_proxy_bearer`, recoverable
+    like a 5xx decline.
     """
 
     def __init__(
