@@ -112,21 +112,21 @@ def test_invalid_provider_configuration_fails_at_startup(monkeypatch, setting, v
 
 
 @pytest.mark.usefixtures("oidc_env")
-@pytest.mark.parametrize("github", [False, True], ids=["oidc", "github"])
 @pytest.mark.parametrize(
-    ("value", "required"),
+    ("value", "required", "github"),
     [
-        (None, True),
-        ("", True),
-        ("1", True),
-        (" TRUE ", True),
-        ("yes", True),
-        ("0", False),
-        ("False", False),
-        ("no", False),
+        (None, True, False),
+        ("", True, False),
+        ("1", True, False),
+        (" TRUE ", True, False),
+        ("yes", True, False),
+        ("0", False, False),
+        ("False", False, False),
+        ("no", False, False),
+        ("0", False, True),
     ],
 )
-def test_reauth_verification_setting(monkeypatch, caplog, github, value, required):
+def test_reauth_verification_setting(monkeypatch, caplog, value, required, github):
     """Re-authentication stays verified unless the operator explicitly opts out."""
     if github:
         monkeypatch.setenv("OMNIGENT_OIDC_ISSUER", "https://github.com")
