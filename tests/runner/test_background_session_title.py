@@ -15,8 +15,8 @@ from typing import Any
 import httpx
 import pytest
 
-from omnigent.codex_native_app_server import NativeCodexLaunch
 from omnigent.harness_plugins import BackgroundTitleGeneratorSpec
+from omnigent.harnesses.codex_native.app_server import NativeCodexLaunch
 from omnigent.inner.codex_executor import _provider_codex_config_overrides
 from omnigent.runner import create_runner_app
 from omnigent.runner.background_titles import BackgroundTitleContext
@@ -32,6 +32,7 @@ from omnigent.runner.background_titles.service import (
     background_title_model,
     build_background_title_instructions,
 )
+from omnigent.runtime.harnesses.process_manager import _build_harness_spawn_env
 from tests.runner.helpers import NullServerClient
 
 
@@ -107,6 +108,7 @@ async def _runner_client(app):
 async def test_background_title_uses_isolated_codex_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("HARNESS_CODEX_SKILLS_DIR", "/ambient-parent-session-skills")
     harness_client = _FakeHarnessClient()
     process_manager = _FakeProcessManager(harness_client)
 
@@ -114,7 +116,10 @@ async def test_background_title_uses_isolated_codex_process(
         assert kwargs["agent_id"] == "agent_test"
         assert kwargs["session_id"] == "conv_test"
         assert kwargs["model_override"] == "gpt-5.4-mini"
-        return "codex", {"HARNESS_CODEX_MODEL": "gpt-5.4-mini"}
+        return "codex", {
+            "HARNESS_CODEX_MODEL": "gpt-5.4-mini",
+            "HARNESS_CODEX_SKILLS_DIR": "/parent-session-skills",
+        }
 
     monkeypatch.setattr(
         "omnigent.runner.app._resolve_harness_config",
@@ -152,7 +157,9 @@ async def test_background_title_uses_isolated_codex_process(
         "HARNESS_CODEX_MINIMAL_CONFIG": "1",
         "HARNESS_CODEX_MODEL": "gpt-5.4-mini",
         "HARNESS_CODEX_SKILLS_FILTER": '"none"',
+        "HARNESS_CODEX_SKILLS_DIR": "",
     }
+    assert _build_harness_spawn_env(env)["HARNESS_CODEX_SKILLS_DIR"] == ""
     assert process_manager.released == [process_key]
 
     [(url, body)] = harness_client.requests
@@ -457,7 +464,27 @@ async def test_claude_native_title_uses_tool_free_print_mode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
+    from omnigent.harnesses.claude_native.main import ClaudeNativeUcodeConfig
+
     captured: dict[str, Any] = {}
+    claude_config = ClaudeNativeUcodeConfig(
+        env={"ANTHROPIC_BASE_URL": "https://gateway.example/anthropic"},
+        api_key_helper="printf token",
+        model_overrides={
+            "claude-opus-5": "deployment-current",
+            "claude-opus-4-8": "deployment-17",
+        },
+    )
+    loop = asyncio.get_running_loop()
+    lookup_started = asyncio.Event()
+    lookup_release = threading.Event()
+    loop_progressed: list[bool] = []
+
+    def resolve_config(*, spec: object = None) -> ClaudeNativeUcodeConfig:
+        assert spec is None
+        loop.call_soon_threadsafe(lookup_started.set)
+        loop_progressed.append(lookup_release.wait(timeout=1.0))
+        return claude_config
 
     class FakeProcess:
         returncode = 0
@@ -470,14 +497,87 @@ async def test_claude_native_title_uses_tool_free_print_mode(
         return FakeProcess()
 
     monkeypatch.setattr(
-        "omnigent.claude_native.resolve_native_claude_config",
-        lambda spec=None: None,
+        "omnigent.harnesses.claude_native.main.resolve_native_claude_config",
+        resolve_config,
     )
     monkeypatch.setattr(
         "omnigent.claude_launcher.resolve_claude_launch",
         lambda command, args: (command, args),
     )
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+
+    task = asyncio.create_task(
+        claude_native_titles.generate_background_title(
+            BackgroundTitleContext(
+                prompt="please investigate the authentication timeout",
+                harness="claude-native",
+                spawn_env={},
+                process_manager=None,
+                cwd=tmp_path,
+                model_override="claude-sonnet-4-6",
+            )
+        )
+    )
+    try:
+        await asyncio.wait_for(lookup_started.wait(), timeout=2.0)
+        lookup_release.set()
+        title = await task
+    finally:
+        lookup_release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert loop_progressed == [True], "title provider resolution blocked the runner's event loop"
+    assert title == "Debug authentication timeout"
+    assert captured["command"] == "claude"
+    args = list(captured["args"])
+    assert args[0] == "--safe-mode"
+    assert args[args.index("--tools") + 1] == ""
+    assert args[args.index("--output-format") + 1] == "text"
+    assert args[args.index("--model") + 1] == "claude-sonnet-4-6"
+    settings = json.loads(args[args.index("--settings") + 1])
+    assert settings == {
+        "apiKeyHelper": "printf token",
+        "modelOverrides": {
+            "claude-opus-5": "deployment-current",
+            "claude-opus-4-8": "deployment-17",
+        },
+    }
+    assert "--no-session-persistence" in args
+    assert captured["kwargs"]["cwd"] == str(tmp_path)
+    assert "CLAUDECODE" not in captured["kwargs"]["env"]
+
+
+@pytest.mark.asyncio
+async def test_claude_native_title_skips_under_windows_native_claude_on_wsl(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """
+    A WSL host with a Windows-native ``claude`` on PATH skips the title, not crash.
+
+    Mirrors the interpreter-mismatch guard in ``_auto_create_claude_terminal``:
+    this print-mode subprocess would hit the same hook incompatibility, so it
+    must be caught before ``create_subprocess_exec`` ever runs, and title
+    generation is best-effort -- it degrades to ``None`` instead of raising.
+    """
+
+    async def _unreached_subprocess_exec(command: str, *args: str, **kwargs: Any) -> object:
+        raise AssertionError("must not spawn claude when the interpreter check fails")
+
+    monkeypatch.setattr(
+        "omnigent.harnesses.claude_native.main.resolve_native_claude_config",
+        lambda spec=None: None,
+    )
+    monkeypatch.setattr(
+        "omnigent.claude_launcher.resolve_claude_launch",
+        lambda command, args: (command, args),
+    )
+    monkeypatch.setattr("omnigent.harnesses.claude_native.bridge.is_wsl", lambda: True)
+    monkeypatch.setattr(
+        "omnigent._platform.resolve_cli_binary",
+        lambda name, **kwargs: "/mnt/c/Users/example/AppData/Roaming/npm/claude.cmd",
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _unreached_subprocess_exec)
 
     title = await claude_native_titles.generate_background_title(
         BackgroundTitleContext(
@@ -490,16 +590,7 @@ async def test_claude_native_title_uses_tool_free_print_mode(
         )
     )
 
-    assert title == "Debug authentication timeout"
-    assert captured["command"] == "claude"
-    args = list(captured["args"])
-    assert args[0] == "--safe-mode"
-    assert args[args.index("--tools") + 1] == ""
-    assert args[args.index("--output-format") + 1] == "text"
-    assert args[args.index("--model") + 1] == "claude-sonnet-4-6"
-    assert "--no-session-persistence" in args
-    assert captured["kwargs"]["cwd"] == str(tmp_path)
-    assert "CLAUDECODE" not in captured["kwargs"]["env"]
+    assert title is None
 
 
 @pytest.mark.asyncio
@@ -520,7 +611,7 @@ async def test_claude_native_title_prefers_title_model_over_session_sources(
         return FakeProcess()
 
     monkeypatch.setattr(
-        "omnigent.claude_native.resolve_native_claude_config",
+        "omnigent.harnesses.claude_native.main.resolve_native_claude_config",
         lambda spec=None: None,
     )
     monkeypatch.setattr(
@@ -574,7 +665,7 @@ async def test_claude_native_title_kills_process_when_cancelled(
     process = FakeProcess()
 
     monkeypatch.setattr(
-        "omnigent.claude_native.resolve_native_claude_config",
+        "omnigent.harnesses.claude_native.main.resolve_native_claude_config",
         lambda spec=None: None,
     )
     monkeypatch.setattr(
@@ -665,11 +756,13 @@ async def test_background_title_uses_native_codex_without_spawning_headless_harn
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("lookup_stage", ["launch", "server"])
 @pytest.mark.parametrize("cancel_during_lookup", [False, True])
 async def test_codex_native_title_keeps_loop_responsive_during_profile_resolution(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     cancel_during_lookup: bool,
+    lookup_stage: str,
 ) -> None:
     """Title preparation must not block unrelated runner tasks on profile lookup."""
     loop = asyncio.get_running_loop()
@@ -678,19 +771,34 @@ async def test_codex_native_title_keeps_loop_responsive_during_profile_resolutio
     lookup_finished = threading.Event()
     loop_progressed: list[bool] = []
 
-    def resolve_host(profile: str | None) -> None:
-        assert profile == "test-profile"
+    def wait_for_lookup() -> None:
         loop.call_soon_threadsafe(lookup_started.set)
         loop_progressed.append(lookup_release.wait(timeout=1.0))
         lookup_finished.set()
 
+    def resolve_launch(*, model: str | None, spec: object = None) -> NativeCodexLaunch:
+        assert model is None
+        assert spec is None
+        if lookup_stage == "launch":
+            wait_for_lookup()
+        return NativeCodexLaunch([], model, "test-profile")
+
+    def resolve_host(profile: str | None) -> None:
+        assert profile == "test-profile"
+        if lookup_stage == "server":
+            wait_for_lookup()
+
     monkeypatch.setattr(
-        "omnigent.codex_native_app_server.resolve_native_codex_launch",
-        lambda *, model, spec=None: NativeCodexLaunch([], model, "test-profile"),
+        "omnigent.harnesses.codex_native.app_server.resolve_native_codex_launch",
+        resolve_launch,
     )
-    monkeypatch.setattr("omnigent.codex_native_app_server._find_codex_cli", lambda: "codex")
-    monkeypatch.setattr("omnigent.codex_native_app_server._clean_codex_env", dict)
-    monkeypatch.setattr("omnigent.codex_native_app_server._databricks_gateway_host", resolve_host)
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server._find_codex_cli", lambda: "codex"
+    )
+    monkeypatch.setattr("omnigent.harnesses.codex_native.app_server._clean_codex_env", dict)
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server._databricks_gateway_host", resolve_host
+    )
     monkeypatch.setattr(
         "omnigent.inner.codex_executor._codex_home_config_source_from_env",
         lambda: tmp_path,
@@ -715,7 +823,8 @@ async def test_codex_native_title_keeps_loop_responsive_during_profile_resolutio
     try:
         await asyncio.wait_for(lookup_started.wait(), timeout=2.0)
         title_roots = list(tmp_path.glob("omnigent-codex-title-*"))
-        assert len(title_roots) == 1
+        if lookup_stage == "server":
+            assert len(title_roots) == 1
         if cancel_during_lookup:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -730,7 +839,7 @@ async def test_codex_native_title_keeps_loop_responsive_during_profile_resolutio
         assert await asyncio.to_thread(lookup_finished.wait, 2.0)
 
     assert loop_progressed == [True], "title profile resolution blocked the runner's event loop"
-    assert not title_roots[0].exists()
+    assert not list(tmp_path.glob("omnigent-codex-title-*"))
 
 
 @pytest.mark.asyncio
@@ -791,11 +900,11 @@ async def test_codex_native_title_uses_ephemeral_tool_free_exec(
         wire_api="responses",
     )
     monkeypatch.setattr(
-        "omnigent.codex_native_app_server.resolve_native_codex_launch",
+        "omnigent.harnesses.codex_native.app_server.resolve_native_codex_launch",
         lambda *, model, spec=None: NativeCodexLaunch(provider_overrides, model, None),
     )
     monkeypatch.setattr(
-        "omnigent.codex_native_app_server._find_codex_cli",
+        "omnigent.harnesses.codex_native.app_server._find_codex_cli",
         lambda: "codex",
     )
     monkeypatch.setattr(
@@ -869,11 +978,11 @@ async def test_codex_native_title_prefers_title_model_over_session_sources(
     source_home.mkdir()
 
     monkeypatch.setattr(
-        "omnigent.codex_native_app_server.resolve_native_codex_launch",
+        "omnigent.harnesses.codex_native.app_server.resolve_native_codex_launch",
         fake_launch,
     )
     monkeypatch.setattr(
-        "omnigent.codex_native_app_server._find_codex_cli",
+        "omnigent.harnesses.codex_native.app_server._find_codex_cli",
         lambda: "codex",
     )
     monkeypatch.setattr(
@@ -923,11 +1032,11 @@ async def test_codex_native_title_kills_process_when_cancelled(
     process = FakeProcess()
 
     monkeypatch.setattr(
-        "omnigent.codex_native_app_server.resolve_native_codex_launch",
+        "omnigent.harnesses.codex_native.app_server.resolve_native_codex_launch",
         lambda *, model, spec=None: NativeCodexLaunch([], model, None),
     )
     monkeypatch.setattr(
-        "omnigent.codex_native_app_server._find_codex_cli",
+        "omnigent.harnesses.codex_native.app_server._find_codex_cli",
         lambda: "codex",
     )
     monkeypatch.setattr(

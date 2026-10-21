@@ -8,15 +8,24 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 
 import pytest
+from sqlalchemy import update
+from sqlalchemy.orm import Session
 
-from omnigent.db.db_models import current_workspace_id
+from omnigent.db.db_models import SqlHost, current_workspace_id
+from omnigent.db.enum_codecs import encode_host_status
+from omnigent.db.utils import get_or_create_engine, now_epoch
 from omnigent.server.managed_hosts import (
     ManagedSandboxConfig,
     ManagedSandboxDeployment,
     ManagedSandboxReaperConfig,
 )
 from omnigent.server.managed_sandbox_reaper import ManagedSandboxReaper
-from omnigent.stores.host_store import Host
+from omnigent.stores.host_store import (
+    Host,
+    HostStore,
+    ManagedSandboxScanCursor,
+    ManagedSandboxScanRow,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -68,32 +77,48 @@ class _FakeHostStore:
         self.detached: list[tuple[int, str, str]] = []
         self.cleared: list[tuple[int, str, str]] = []
         self.refresh_on_detach: set[str] = set()
-        self.stale_queries: list[tuple[int, int]] = []
+        self.current_page_queries: list[tuple[ManagedSandboxScanCursor | None, int]] = []
+        self.terminating_page_queries: list[tuple[ManagedSandboxScanCursor | None, int]] = []
 
-    def list_managed_sandbox_workspace_ids(self) -> list[int]:
-        return sorted(
-            workspace_id
-            for workspace_id, hosts in self.hosts.items()
-            if any(
-                host.sandbox_provider is not None
-                and (host.sandbox_id is not None or host.terminating_sandbox_id is not None)
+    def list_current_managed_sandbox_hosts_page(
+        self,
+        *,
+        after: ManagedSandboxScanCursor | None,
+        limit: int,
+    ) -> list[ManagedSandboxScanRow]:
+        self.current_page_queries.append((after, limit))
+        rows = sorted(
+            (
+                (host.sandbox_id, workspace_id, host.host_id, host)
+                for workspace_id, hosts in self.hosts.items()
                 for host in hosts.values()
-            )
+                if host.sandbox_id is not None
+            ),
+            key=lambda row: row[:3],
         )
+        if after is not None:
+            rows = [row for row in rows if row[:3] > after]
+        return [(workspace_id, host) for _, workspace_id, _, host in rows[:limit]]
 
-    def list_stale_managed_sandbox_hosts(self, older_than_epoch: int) -> list[Host]:
-        workspace_id = current_workspace_id()
-        self.stale_queries.append((workspace_id, older_than_epoch))
-        hosts = [
-            host
-            for host in self.hosts[workspace_id].values()
-            if host.sandbox_provider is not None
-            and (
-                host.terminating_sandbox_id is not None
-                or (host.sandbox_id is not None and host.updated_at <= older_than_epoch)
-            )
-        ]
-        return sorted(hosts, key=lambda host: (host.updated_at, host.host_id))
+    def list_terminating_managed_sandbox_hosts_page(
+        self,
+        *,
+        after: ManagedSandboxScanCursor | None,
+        limit: int,
+    ) -> list[ManagedSandboxScanRow]:
+        self.terminating_page_queries.append((after, limit))
+        rows = sorted(
+            (
+                (host.terminating_sandbox_id, workspace_id, host.host_id, host)
+                for workspace_id, hosts in self.hosts.items()
+                for host in hosts.values()
+                if host.terminating_sandbox_id is not None
+            ),
+            key=lambda row: row[:3],
+        )
+        if after is not None:
+            rows = [row for row in rows if row[:3] > after]
+        return [(workspace_id, host) for _, workspace_id, _, host in rows[:limit]]
 
     def detach_stale_managed_sandbox(
         self,
@@ -111,6 +136,7 @@ class _FakeHostStore:
             self.refresh_on_detach.remove(host_id)
         if (
             host is None
+            or host.deleted_at is not None
             or host.sandbox_id != sandbox_id
             or host.updated_at != expected_updated_at
             or host.terminating_sandbox_id is not None
@@ -125,7 +151,7 @@ class _FakeHostStore:
         self.detached.append((workspace_id, host_id, sandbox_id))
         return True
 
-    def mark_terminating_sandbox_terminated(
+    def mark_sandbox_terminated(
         self,
         host_id: str,
         *,
@@ -133,12 +159,30 @@ class _FakeHostStore:
     ) -> bool:
         workspace_id = current_workspace_id()
         host = self.hosts[workspace_id].get(host_id)
-        if host is None or host.terminating_sandbox_id != sandbox_id:
+        if host is None:
             return False
-        self.hosts[workspace_id][host_id] = replace(
+        if host.deleted_at is None:
+            if host.terminating_sandbox_id != sandbox_id:
+                return False
+            self.hosts[workspace_id][host_id] = replace(
+                host,
+                terminating_sandbox_id=None,
+            )
+            self.cleared.append((workspace_id, host_id, sandbox_id))
+            return True
+        if sandbox_id not in {host.sandbox_id, host.terminating_sandbox_id}:
+            return False
+        updated = replace(
             host,
-            terminating_sandbox_id=None,
+            sandbox_id=None if host.sandbox_id == sandbox_id else host.sandbox_id,
+            terminating_sandbox_id=(
+                None if host.terminating_sandbox_id == sandbox_id else host.terminating_sandbox_id
+            ),
         )
+        if updated.sandbox_id is None and updated.terminating_sandbox_id is None:
+            del self.hosts[workspace_id][host_id]
+        else:
+            self.hosts[workspace_id][host_id] = updated
         self.cleared.append((workspace_id, host_id, sandbox_id))
         return True
 
@@ -151,6 +195,7 @@ def _host(
     updated_at: int,
     status: str = "offline",
     terminating_sandbox_id: str | None = None,
+    deleted_at: int | None = None,
 ) -> Host:
     return Host(
         host_id=host_id,
@@ -162,6 +207,7 @@ def _host(
         sandbox_provider=provider,
         sandbox_id=sandbox_id,
         terminating_sandbox_id=terminating_sandbox_id,
+        deleted_at=deleted_at,
     )
 
 
@@ -255,7 +301,81 @@ async def test_sweep_reaps_stale_host_rows_without_scanning_sessions() -> None:
     assert hosts.hosts[7]["host_modal"].sandbox_id is None
     assert hosts.hosts[7]["host_modal"].terminating_sandbox_id is None
     assert hosts.hosts[7]["host_recent"].sandbox_id == "sb-recent"
-    assert hosts.stale_queries == [(7, now - _DAY_S), (9, now - _DAY_S)]
+    assert hosts.terminating_page_queries == [(None, 500)]
+    assert hosts.current_page_queries == [(None, 500)]
+
+
+async def test_sweep_completely_traverses_bounded_slot_pages() -> None:
+    now = 4_000_000
+    modal = _RecordingLauncher("modal")
+    hosts = _FakeHostStore(
+        {
+            7: [
+                _host(
+                    "host_current_a",
+                    provider="modal",
+                    sandbox_id="sb-current-a",
+                    updated_at=now - 2 * _DAY_S,
+                ),
+                _host(
+                    "host_current_b",
+                    provider="modal",
+                    sandbox_id="sb-current-b",
+                    updated_at=now - 3 * _DAY_S,
+                ),
+                _host(
+                    "host_current_c",
+                    provider="modal",
+                    sandbox_id="sb-current-c",
+                    updated_at=now - 4 * _DAY_S,
+                ),
+                _host(
+                    "host_pending_a",
+                    provider="modal",
+                    sandbox_id=None,
+                    terminating_sandbox_id="sb-pending-a",
+                    updated_at=now,
+                ),
+                _host(
+                    "host_pending_b",
+                    provider="modal",
+                    sandbox_id=None,
+                    terminating_sandbox_id="sb-pending-b",
+                    updated_at=now,
+                ),
+                _host(
+                    "host_pending_c",
+                    provider="modal",
+                    sandbox_id=None,
+                    terminating_sandbox_id="sb-pending-c",
+                    updated_at=now,
+                ),
+            ]
+        }
+    )
+    reaper = ManagedSandboxReaper(
+        host_store=hosts,  # type: ignore[arg-type]
+        sandbox_config=_deployment([modal]),
+        scan_batch_size=2,
+    )
+
+    assert await reaper.sweep_once(now=now) == 6
+    assert set(modal.terminated) == {
+        "sb-current-a",
+        "sb-current-b",
+        "sb-current-c",
+        "sb-pending-a",
+        "sb-pending-b",
+        "sb-pending-c",
+    }
+    assert hosts.terminating_page_queries == [
+        (None, 2),
+        (("sb-pending-b", 7, "host_pending_b"), 2),
+    ]
+    assert hosts.current_page_queries == [
+        (None, 2),
+        (("sb-current-b", 7, "host_current_b"), 2),
+    ]
 
 
 async def test_provider_failure_does_not_stop_other_sandboxes() -> None:
@@ -290,6 +410,37 @@ async def test_provider_failure_does_not_stop_other_sandboxes() -> None:
     assert hosts.hosts[7]["host_modal"].terminating_sandbox_id == "sb-modal"
     assert hosts.hosts[7]["host_e2b"].sandbox_id is None
     assert e2b.terminated == ["sb-e2b"]
+
+
+async def test_deleted_host_cleanup_retries_without_offline_age() -> None:
+    now = 4_000_000
+    modal = _RecordingLauncher("modal", fail=True)
+    hosts = _FakeHostStore(
+        {
+            7: [
+                _host(
+                    "host_deleted",
+                    provider="modal",
+                    sandbox_id="sb-deleted",
+                    updated_at=now,
+                    status="online",
+                    deleted_at=now,
+                )
+            ]
+        }
+    )
+    reaper = ManagedSandboxReaper(
+        host_store=hosts,  # type: ignore[arg-type]
+        sandbox_config=_deployment([modal]),
+    )
+
+    assert await reaper.sweep_once(now=now) == 0
+    assert hosts.hosts[7]["host_deleted"].sandbox_id == "sb-deleted"
+
+    modal.fail = False
+    assert await reaper.sweep_once(now=now) == 1
+    assert modal.terminated == ["sb-deleted"]
+    assert "host_deleted" not in hosts.hosts[7]
 
 
 async def test_provider_identity_failure_does_not_stop_other_sandboxes() -> None:
@@ -389,6 +540,54 @@ async def test_successful_termination_preserves_new_active_generation() -> None:
     assert modal.terminated == ["sb-modal"]
     assert hosts.hosts[7]["host_modal"].sandbox_id == "sb-modal-new"
     assert hosts.hosts[7]["host_modal"].terminating_sandbox_id is None
+
+
+@pytest.mark.parametrize("stale_status", ["offline", "online"])
+async def test_new_binding_gets_reaping_grace_without_reviving_host(
+    db_uri: str, stale_status: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hosts = HostStore(db_uri)
+    host_id = "ab" * 16
+    modal = _RecordingLauncher("modal")
+    reaper = ManagedSandboxReaper(host_store=hosts, sandbox_config=_deployment([modal]))
+    now = now_epoch()
+    monkeypatch.setattr("omnigent.stores.host_store.now_epoch", lambda: now)
+    hosts.reserve_sandbox_host(
+        host_id=host_id, name="managed-host", user_id="alice@example.com", provider="modal"
+    )
+    hosts.bind_sandbox(host_id, provider="modal", sandbox_id="old")
+    with Session(get_or_create_engine(db_uri)) as session:
+        session.execute(
+            update(SqlHost)
+            .where(SqlHost.workspace_id == current_workspace_id(), SqlHost.host_id == host_id)
+            .values(updated_at=now - 2 * _DAY_S)
+        )
+        session.commit()
+    assert await reaper.sweep_once(now=now) == 1
+    assert modal.terminated == ["old"]
+
+    # A durable row may retain online status after an unclean host disconnect.
+    with Session(get_or_create_engine(db_uri)) as session:
+        session.execute(
+            update(SqlHost)
+            .where(SqlHost.workspace_id == current_workspace_id(), SqlHost.host_id == host_id)
+            .values(status=encode_host_status(stale_status))
+        )
+        session.commit()
+    hosts.reserve_sandbox_host(
+        host_id=host_id, name="managed-host", user_id="alice@example.com", provider="modal"
+    )
+    bound = hosts.bind_sandbox(host_id, provider="modal", sandbox_id="replacement")
+    assert bound is not None
+    assert not hosts.is_online(host_id)
+    assert await reaper.sweep_once(now=now) == 0
+    assert modal.terminated == ["old"]
+    assert hosts.get_host(host_id) == bound
+    # Rebinding the same generation must not extend its lifetime indefinitely.
+    monkeypatch.setattr("omnigent.stores.host_store.now_epoch", lambda: now + 3600)
+    assert hosts.bind_sandbox(host_id, provider="modal", sandbox_id="replacement") == bound
+    assert await reaper.sweep_once(now=now + _DAY_S) == 1
+    assert modal.terminated == ["old", "replacement"]
 
 
 async def test_pending_termination_retries_without_detaching_active_generation() -> None:
