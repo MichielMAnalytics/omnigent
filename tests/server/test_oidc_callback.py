@@ -200,6 +200,7 @@ def callback_client(
         prefix="/auth",
     )
     app.state.pending_id_token = pending_id_token
+    app.state.auth_provider = provider
 
     with TestClient(app) as client:
         yield client, keys
@@ -783,9 +784,9 @@ def test_device_approval_reauthenticates_before_consent(
     approved: bool,
 ) -> None:
     client, keys = callback_client
-    provider = UnifiedAuthProvider(source="oidc", oidc_config=_oidc_config())
+    device_store = DeviceGrantStore(f"sqlite:///{tmp_path}/device.db")
     client.app.include_router(
-        create_device_auth_router(provider, DeviceGrantStore(f"sqlite:///{tmp_path}/device.db"))
+        create_device_auth_router(client.app.state.auth_provider, device_store)
     )
     claims: dict[str, object] = {"email": "alice@example.com", "email_verified": True}
     assert _do_callback(client, keys.sign_id_token(claims)).status_code == 302

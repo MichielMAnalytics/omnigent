@@ -503,7 +503,6 @@ def create_auth_router(
         # session, auth_time predates our demand and we must refuse rather
         # than mint a fresh session that would pass the freshness gate.
         # GitHub has no id_token / auth_time, so reauth is never set for it.
-        # OMNIGENT_OIDC_REQUIRE_REAUTH=0 waives only this auth_time check.
         reauth_at = state_payload.get("reauth_at")
         if isinstance(reauth_at, int) and not config.require_reauth:
             _logger.info(

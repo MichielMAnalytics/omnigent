@@ -191,7 +191,8 @@ class OIDCConfig:
     :param require_reauth: When ``False``, forced re-authentication
         logins (CLI tickets, device consent) still send
         ``prompt=login``/``max_age=0`` but skip verifying the
-        id_token's ``auth_time``. Only affects the generic-OIDC path.
+        id_token's ``auth_time``. Validated for every provider, but
+        GitHub never forces re-authentication, so it has no effect there.
     """
 
     issuer: str
