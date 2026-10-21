@@ -827,7 +827,8 @@ def test_device_approval_reauthenticates_before_consent(
     if not approved:
         assert callback.status_code == 403
         assert "did not confirm re-authentication" in callback.json()["error"]
-        assert "Connected" not in approval.text
+        assert approval.status_code == 200
+        assert "Your session is too old to approve this login." in approval.text
         return
     assert callback.status_code == 302
     assert "Authorize access" in client.get(callback.headers["location"]).text
