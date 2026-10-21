@@ -30,6 +30,7 @@ closes the residual "IdP ignored prompt=login" hole) is covered in
 
 from __future__ import annotations
 
+import dataclasses
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -72,6 +73,7 @@ def _oidc_config() -> OIDCConfig:
 
 @pytest.fixture
 def login_client(
+    request: pytest.FixtureRequest,
     tmp_path,
     db_uri: str,
 ) -> TestClient:
@@ -81,7 +83,8 @@ def login_client(
     admins = tmp_path / "admins"
     admins.write_text("")
     perm_store = SqlAlchemyPermissionStore(db_uri)
-    provider = UnifiedAuthProvider(source="oidc", oidc_config=_oidc_config())
+    config = dataclasses.replace(_oidc_config(), **getattr(request, "param", {}))
+    provider = UnifiedAuthProvider(source="oidc", oidc_config=config)
 
     app = FastAPI()
     app.include_router(
@@ -97,6 +100,14 @@ def _parse_auth_url(location: str) -> dict[str, list[str]]:
     parsed = urlsplit(location)
     assert parsed.netloc in location, f"unexpected redirect: {location!r}"
     return parse_qs(parsed.query)
+
+
+# Disabling auth_time verification must not weaken the login-side demand.
+_REAUTH_SETTINGS = pytest.mark.parametrize(
+    "login_client",
+    [pytest.param({}, id="default"), pytest.param({"require_reauth": False}, id="reauth-opt-out")],
+    indirect=True,
+)
 
 
 def test_login_without_reauth_sends_no_prompt(login_client: TestClient) -> None:
@@ -116,6 +127,7 @@ def test_login_without_reauth_sends_no_prompt(login_client: TestClient) -> None:
     )
 
 
+@_REAUTH_SETTINGS
 def test_login_with_reauth_forces_prompt_login_at_idp(login_client: TestClient) -> None:
     """OIDC /auth/login?reauth=1 must forward prompt=login + max_age=0 to the IdP.
 
@@ -151,11 +163,7 @@ def github_client(tmp_path, db_uri: str) -> TestClient:
     admins.write_text("")
     perm_store = SqlAlchemyPermissionStore(db_uri)
     # GitHub OAuth uses _source="oidc" but provider_type="github".
-    github_cfg = _oidc_config()
-    # Patch provider_type to github for this fixture.
-    import dataclasses
-
-    github_cfg = dataclasses.replace(github_cfg, provider_type="github")
+    github_cfg = dataclasses.replace(_oidc_config(), provider_type="github")
     provider = UnifiedAuthProvider(source="oidc", oidc_config=github_cfg)
     app = FastAPI()
     app.include_router(
@@ -166,6 +174,7 @@ def github_client(tmp_path, db_uri: str) -> TestClient:
         return client
 
 
+@_REAUTH_SETTINGS
 def test_login_with_reauth_stamps_reauth_at_in_state(login_client: TestClient) -> None:
     """OIDC /auth/login?reauth=1 records reauth_at in the signed state cookie.
 

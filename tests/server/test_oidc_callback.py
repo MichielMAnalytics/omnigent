@@ -38,12 +38,14 @@ from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from omnigent.server.admin_list import AdminList
 from omnigent.server.auth import UnifiedAuthProvider
+from omnigent.server.device_grant_store import DeviceGrantStore
 from omnigent.server.oidc import OIDCConfig
 from omnigent.server.routes.auth import (
     _AUTH_STATE_COOKIE_PLAIN,
     _resolve_oidc_email,
     create_auth_router,
 )
+from omnigent.server.routes.device_auth import create_device_auth_router
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 
 _TEST_SECRET = bytes.fromhex("aa" * 32)
@@ -761,6 +763,74 @@ def test_cli_approval_requires_authentication_for_its_ticket(
     assert (
         client.get("/auth/cli-poll", params=poll_params, headers=poll_headers).status_code == 200
     )
+
+
+@pytest.mark.parametrize(
+    ("callback_client", "idp_sends_auth_time", "approved"),
+    [
+        pytest.param({}, True, True, id="auth-time-verified"),
+        pytest.param({}, False, False, id="missing-auth-time-refused"),
+        pytest.param(
+            {"require_reauth": False}, False, True, id="reauth-opt-out-without-auth-time"
+        ),
+    ],
+    indirect=["callback_client"],
+)
+def test_device_approval_reauthenticates_before_consent(
+    callback_client: tuple[TestClient, _IdpKeys],
+    tmp_path: Path,
+    idp_sends_auth_time: bool,
+    approved: bool,
+) -> None:
+    client, keys = callback_client
+    provider = UnifiedAuthProvider(source="oidc", oidc_config=_oidc_config())
+    client.app.include_router(
+        create_device_auth_router(provider, DeviceGrantStore(f"sqlite:///{tmp_path}/device.db"))
+    )
+    claims: dict[str, object] = {"email": "alice@example.com", "email_verified": True}
+    assert _do_callback(client, keys.sign_id_token(claims)).status_code == 302
+    client.cookies.delete(_AUTH_STATE_COOKIE_PLAIN)
+    for cookie in client.cookies.jar:
+        if cookie.name == "ap_session":
+            session = jwt.decode(cookie.value, _TEST_SECRET, algorithms=["HS256"])
+            session["iat"] -= 3600
+            cookie.value = jwt.encode(session, _TEST_SECRET, algorithm="HS256")
+    user_code = client.post("/oauth/device/authorize", json={"client_id": "slack"}).json()[
+        "user_code"
+    ]
+
+    consent = client.get("/oauth/device", params={"user_code": user_code}, follow_redirects=False)
+    assert consent.status_code == 302
+    assert parse_qs(urlsplit(consent.headers["location"]).query)["reauth"] == ["1"]
+    login = client.get(consent.headers["location"], follow_redirects=False)
+    authorization = parse_qs(urlsplit(login.headers["location"]).query)
+    assert authorization["prompt"] == ["login"]
+    assert authorization["max_age"] == ["0"]
+    state = jwt.decode(
+        client.cookies[_AUTH_STATE_COOKIE_PLAIN], _TEST_SECRET, algorithms=["HS256"]
+    )
+    if idp_sends_auth_time:
+        claims["auth_time"] = state["reauth_at"]
+    client.app.state.pending_id_token[0] = keys.sign_id_token(claims)
+    callback = client.get(
+        "/auth/callback",
+        params={"code": "auth-code", "state": authorization["state"][0]},
+        follow_redirects=False,
+    )
+    approval = client.post(
+        "/oauth/device/approve",
+        data={"user_code": user_code},
+        headers={"Origin": "http://localhost:8000"},
+    )
+
+    if not approved:
+        assert callback.status_code == 403
+        assert "did not confirm re-authentication" in callback.json()["error"]
+        assert "Connected" not in approval.text
+        return
+    assert callback.status_code == 302
+    assert "Authorize access" in client.get(callback.headers["location"]).text
+    assert "<h1>Connected</h1>" in approval.text
 
 
 def test_cli_ticket_fulfillment_issues_refresh_grant(

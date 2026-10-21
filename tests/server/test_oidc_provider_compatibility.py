@@ -112,17 +112,34 @@ def test_invalid_provider_configuration_fails_at_startup(monkeypatch, setting, v
 
 
 @pytest.mark.usefixtures("oidc_env")
+@pytest.mark.parametrize("github", [False, True], ids=["oidc", "github"])
 @pytest.mark.parametrize(
     ("value", "required"),
-    [(None, True), ("", True), ("1", True), (" TRUE ", True), ("0", False), ("False", False)],
+    [
+        (None, True),
+        ("", True),
+        ("1", True),
+        (" TRUE ", True),
+        ("yes", True),
+        ("0", False),
+        ("False", False),
+        ("no", False),
+    ],
 )
-def test_reauth_verification_setting(monkeypatch, caplog, value, required):
+def test_reauth_verification_setting(monkeypatch, caplog, github, value, required):
     """Re-authentication stays verified unless the operator explicitly opts out."""
+    if github:
+        monkeypatch.setenv("OMNIGENT_OIDC_ISSUER", "https://github.com")
+        monkeypatch.setenv("OMNIGENT_OIDC_CLIENT_SECRET", "secret")
+        for name in ("TOKEN_ENDPOINT_AUTH_METHOD", *(name.upper() for name in _ENDPOINTS)):
+            monkeypatch.delenv(f"OMNIGENT_OIDC_{name}")
     if value is not None:
         monkeypatch.setenv("OMNIGENT_OIDC_REQUIRE_REAUTH", value)
     with caplog.at_level("WARNING", logger="omnigent.server.oidc"):
         assert OIDCConfig.from_env().require_reauth is required
-    assert ("OMNIGENT_OIDC_REQUIRE_REAUTH is disabled" in caplog.text) is not required
+    # GitHub never forces re-authentication, so the opt-out changes nothing there.
+    warned = "OMNIGENT_OIDC_REQUIRE_REAUTH is disabled" in caplog.text
+    assert warned is (not required and not github)
 
 
 @pytest.mark.usefixtures("oidc_env")

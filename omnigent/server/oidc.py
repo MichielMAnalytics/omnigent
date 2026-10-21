@@ -450,6 +450,7 @@ class OIDCConfig:
                 userinfo_endpoint=_GITHUB_USERINFO_ENDPOINT,
                 allow_invites=allow_invites,
                 skip_email_verification=skip_email_verification,
+                require_reauth=require_reauth,
             )
 
         # Standard OIDC: fetch discovery document.
