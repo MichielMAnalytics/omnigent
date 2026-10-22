@@ -99,6 +99,7 @@ import {
   type PullRequestComment,
   type PullRequestInfo,
 } from "@/hooks/usePullRequests";
+import { PullRequestDescription, PullRequestTitle } from "./PullRequestDetails";
 import { PullRequestLabels } from "./PullRequestLabels";
 import { PullRequestMerge } from "./PullRequestMerge";
 import { PullRequestReviewers } from "./PullRequestReviewers";
@@ -710,7 +711,7 @@ function PullRequestSummaryTab({
   checks,
   checksSupported,
   checksUnavailableHint,
-  body,
+  description,
 }: {
   reviewers: React.ReactNode;
   labels: React.ReactNode;
@@ -718,7 +719,7 @@ function PullRequestSummaryTab({
   checks: PullRequestChecks;
   checksSupported: boolean;
   checksUnavailableHint?: string;
-  body: string | null | undefined;
+  description: React.ReactNode;
 }) {
   const showChecks = checks.total > 0 || checks.partial || !checksSupported;
   const showReviewers = !!reviewers;
@@ -798,18 +799,7 @@ function PullRequestSummaryTab({
       {(showPeople || showStatus) && <Separator />}
       {/* Extra bottom padding so the end of a long description can scroll clear
           of the very bottom edge, where it's awkward to read. */}
-      <section className="space-y-1.5 p-3 pb-16">
-        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Description
-        </h3>
-        {body ? (
-          <div className="text-ui break-words">
-            <MessageResponse>{body}</MessageResponse>
-          </div>
-        ) : (
-          <p className="text-ui text-muted-foreground italic">No description provided.</p>
-        )}
-      </section>
+      <div className="p-3 pb-16">{description}</div>
     </div>
   );
 }
@@ -1674,19 +1664,16 @@ function PullRequestPanelDetails({
               <div className="ml-auto shrink-0">{refreshButton}</div>
             </div>
             <div className="mt-1 flex flex-nowrap items-center gap-2">
-              <a
-                href={pr.url}
-                target="_blank"
-                rel="noreferrer"
-                className="group flex min-w-0 items-center gap-1 text-ui font-medium hover:underline"
-              >
-                <span className="truncate">{pr.title}</span>
-                <span className="shrink-0 text-muted-foreground">
-                  {copy.prNumberPrefix}
-                  {pr.number}
-                </span>
-                <ExternalLinkIcon className="size-3 shrink-0 text-muted-foreground" />
-              </a>
+              <PullRequestTitle
+                // A different PR starts fresh, so an open title edit can't outlive its PR.
+                key={data.selected_pr_url ?? pr.url}
+                conversationId={conversationId}
+                prUrl={data.selected_pr_url ?? null}
+                url={pr.url}
+                title={pr.title}
+                numberLabel={`${copy.prNumberPrefix}${pr.number}`}
+                editable={canEdit && !!data.capabilities.details_editing}
+              />
               <PullRequestStatus state={pr.state} />
             </div>
           </div>
@@ -1755,7 +1742,15 @@ function PullRequestPanelDetails({
             checks={checks}
             checksSupported={pr.checks_supported !== false}
             checksUnavailableHint={copy.checksUnavailableHint}
-            body={pr.body}
+            description={
+              <PullRequestDescription
+                conversationId={conversationId}
+                prUrl={data.selected_pr_url ?? null}
+                body={pr.body}
+                editable={canEdit && !!data.capabilities.details_editing}
+                attachments={!!data.capabilities.attachment_uploads}
+              />
+            }
           />
         </TabsContent>
 

@@ -3864,6 +3864,14 @@ class HostProcess:
                 add=params.get("add", []),
                 remove=params.get("remove", []),
             )
+        if op == "github_details_update":
+            return pr_resource.update_pr_details(
+                workspace,
+                session_id=cast("str | None", params.get("session_id")),
+                pr_url=cast("str | None", params.get("pr_url")),
+                title=params.get("title"),
+                body=params.get("body"),
+            )
         raise ValueError(f"unknown fs write op: {op!r}")
 
     async def _handle_create_worktree(

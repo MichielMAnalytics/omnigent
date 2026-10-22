@@ -9426,6 +9426,50 @@ def test_github_reviewer_ops_are_served_on_host(
     ]
 
 
+def test_github_details_update_is_served_on_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The host renames the PR when the runner is offline, as the session's tracked PR."""
+    from omnigent.host.frames import HostFsWriteFrame
+    from omnigent.runner import github_resource
+    from omnigent.runner.session_prs import PullRequestRef, SessionPrRegistry
+
+    monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(github_resource, "_pr_token", lambda *_a: None)
+    sent: list[dict[str, str]] = []
+
+    def gh(argv: list[str], **_kwargs: object) -> tuple[int, str, str]:
+        sent.append(json.loads(Path(argv[argv.index("--input") + 1]).read_text()))
+        return 0, json.dumps({"title": "Renamed", "body": "Body"}), ""
+
+    monkeypatch.setattr(github_resource, "_gh", gh)
+    url = "https://github.com/example/one/pull/42"
+    SessionPrRegistry("session").record(
+        [PullRequestRef.from_url(url)], relationship="created", source="test"
+    )
+    host = _make_host_process()
+    try:
+        edited = host._handle_fs_write(
+            HostFsWriteFrame(
+                request_id="details-update",
+                op="github_details_update",
+                workspace=str(tmp_path),
+                session_id="session",
+                params={"pr_url": url, "title": " Renamed ", "body": None},
+            )
+        )
+    finally:
+        _cleanup_host(host)
+
+    assert edited.status == "ok", edited
+    assert edited.payload == {
+        "object": "session.github.pr_details",
+        "title": "Renamed",
+        "body": "Body",
+    }
+    assert sent == [{"title": "Renamed"}]
+
+
 def test_fs_search_reuses_the_changed_files_snapshot_across_requests(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

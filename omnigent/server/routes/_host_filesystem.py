@@ -150,15 +150,16 @@ async def write_workspace_from_host(
     The write counterpart of :func:`read_workspace_from_host` — for the small set
     of host-servable writes (currently ``"github_set_preference"``,
     ``"github_prs_update"``, ``"github_labels_update"``, ``"github_reviewers_update"``,
-    ``"github_merge"``, and ``"github_disable_auto_merge"``) so a preference change,
-    a PR attach/remove, a label or reviewer edit, or a merge works when the session's
-    runner is offline. Shares the result frame, the ``pending_fs_requests``
-    correlation map, and the error mapping with reads.
+    ``"github_details_update"``, ``"github_merge"``, and ``"github_disable_auto_merge"``)
+    so a preference change, a PR attach/remove, a label, reviewer, title, or
+    description edit, or a merge works when the session's runner is offline.
+    Shares the result frame, the ``pending_fs_requests`` correlation map, and the
+    error mapping with reads.
 
     :param op: Write op name — currently ``"github_set_preference"``,
         ``"github_prs_update"``, ``"github_labels_update"``,
-        ``"github_reviewers_update"``, ``"github_merge"``, or
-        ``"github_disable_auto_merge"``.
+        ``"github_reviewers_update"``, ``"github_details_update"``, ``"github_merge"``,
+        or ``"github_disable_auto_merge"``.
     :param params: Operation-specific arguments, e.g. ``{"account": ...}``.
     :returns: The refreshed payload on success.
     :raises HostFsError: When the host reports a failure (reproduces the runner's
