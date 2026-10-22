@@ -3,12 +3,13 @@
 // with a preview; pasted, dropped, or picked images and videos upload at once and
 // are embedded as provider URLs, so saving is one plain text edit.
 
-import { useCallback, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLinkIcon, Loader2Icon, PaperclipIcon, PencilIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import type { Components } from "streamdown";
 import { MessageResponse } from "@/components/ai-elements/message";
 import {
   uploadPullRequestAttachment,
@@ -31,6 +32,21 @@ export function attachmentMarkdown(attachment: PullRequestAttachment, fileName: 
   return `![${alt}](${attachment.url})`;
 }
 
+/** Markdown image renderer that shows a draft's own uploads from their local copies. */
+function localPreviewImages(previews: Record<string, string>): Components {
+  return {
+    img: ({ node: _node, src, alt, ...props }) => (
+      <img
+        {...props}
+        alt={alt ?? ""}
+        src={(typeof src === "string" && previews[src]) || src}
+        referrerPolicy="no-referrer"
+        className="max-w-full rounded-md"
+      />
+    ),
+  };
+}
+
 // ── Description drafts ──────────────────────────────────────────────────────
 // Kept outside React so a draft, and uploads still landing in it, survive the
 // Summary tab unmounting when the reader switches tabs.
@@ -39,6 +55,8 @@ interface DescriptionDraft {
   body: string;
   uploading: number;
   error: string | null;
+  /** Local copies of this draft's uploads by URL; GitHub serves them only once a saved body links them. */
+  previews: Record<string, string>;
 }
 
 const descriptionDrafts = new Map<string, DescriptionDraft>();
@@ -57,12 +75,15 @@ function updateDescriptionDraft(
   if (!draft) return;
   const next = update(draft);
   if (next) descriptionDrafts.set(key, next);
-  else descriptionDrafts.delete(key);
+  else {
+    descriptionDrafts.delete(key);
+    Object.values(draft.previews).forEach((preview) => URL.revokeObjectURL(preview));
+  }
   draftListeners.forEach((listener) => listener());
 }
 
 function startDescriptionDraft(key: string, body: string): void {
-  descriptionDrafts.set(key, { body, uploading: 0, error: null });
+  descriptionDrafts.set(key, { body, uploading: 0, error: null, previews: {} });
   draftListeners.forEach((listener) => listener());
 }
 
@@ -79,7 +100,7 @@ export function insertOnOwnLine(body: string, text: string, start: number, end: 
 
 /** Forget every draft; for tests. */
 export function resetPullRequestDescriptionDrafts(): void {
-  descriptionDrafts.clear();
+  for (const key of [...descriptionDrafts.keys()]) updateDescriptionDraft(key, () => null);
   draftListeners.forEach((listener) => listener());
 }
 
@@ -248,7 +269,7 @@ export function PullRequestDescription({
         />
       ) : body ? (
         <div className="text-ui break-words">
-          <MessageResponse>{body}</MessageResponse>
+          <MessageResponse allowGitHubAttachmentImages>{body}</MessageResponse>
         </div>
       ) : (
         <p className="text-ui text-muted-foreground italic">No description provided.</p>
@@ -307,6 +328,7 @@ function PullRequestDescriptionEditor({
               ...current,
               body: current.body.replace(placeholder, attachmentMarkdown(attachment, file.name)),
               uploading: current.uploading - 1,
+              previews: { ...current.previews, [attachment.url]: URL.createObjectURL(file) },
             })),
           (error: unknown) =>
             updateDescriptionDraft(draftKey, (current) => ({
@@ -339,6 +361,7 @@ function PullRequestDescriptionEditor({
     close();
   };
 
+  const previewImages = useMemo(() => localPreviewImages(draft.previews), [draft.previews]);
   const error = update.isError ? update.error.message : draft.error;
   return (
     <div className="space-y-2">
@@ -417,7 +440,9 @@ function PullRequestDescriptionEditor({
         <TabsContent value="preview">
           <div className="min-h-40 rounded-lg border border-border px-2.5 py-2 text-ui break-words">
             {draft.body.trim() ? (
-              <MessageResponse>{draft.body}</MessageResponse>
+              <MessageResponse allowGitHubAttachmentImages components={previewImages}>
+                {draft.body}
+              </MessageResponse>
             ) : (
               <p className="text-muted-foreground italic">Nothing to preview.</p>
             )}

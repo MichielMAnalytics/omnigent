@@ -695,7 +695,7 @@ function PullRequestCommentCard({
         )}
       </div>
       <div className="text-ui break-words">
-        <MessageResponse>{comment.body}</MessageResponse>
+        <MessageResponse allowGitHubAttachmentImages>{comment.body}</MessageResponse>
       </div>
     </li>
   );

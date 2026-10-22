@@ -4,7 +4,7 @@
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import type { PullRequestAttachment, PullRequestInfo } from "@/hooks/usePullRequests";
 import {
   attachmentMarkdown,
@@ -276,6 +276,34 @@ it("uploads a pasted image at the caret and embeds GitHub's URL", async () => {
 
   await waitFor(() => expect(editor()).toHaveValue(`Before \n![login error](${ASSET_URL})\nAfter`));
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
+it("previews a fresh upload from its local copy, which GitHub serves only once saved", async () => {
+  const { uploads } = stubFetch();
+  const createObjectURL = vi.fn(() => "blob:http://localhost/local-copy");
+  const revokeObjectURL = vi.fn();
+  // jsdom has no object URLs.
+  const original = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+  Object.assign(URL, { createObjectURL, revokeObjectURL });
+  onTestFinished(() => void Object.assign(URL, original));
+  renderDetails();
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit description" }));
+  fireEvent.change(editor(), { target: { value: "" } });
+  const image = new File(["png"], "shot.png", { type: "image/png" });
+  fireEvent.paste(editor(), { clipboardData: { files: [image] } });
+  await waitFor(() => expect(uploads).toHaveLength(1));
+  await act(async () => uploads[0].respond(attachment("image/png")));
+  await waitFor(() => expect(editor()).toHaveValue(`![shot](${ASSET_URL})`));
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "Preview" }));
+
+  const preview = await screen.findByRole("img", { name: "shot" });
+  expect(preview).toHaveAttribute("src", "blob:http://localhost/local-copy");
+  expect(createObjectURL).toHaveBeenCalledWith(image);
+
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:http://localhost/local-copy");
 });
 
 it("puts an uploaded video on its own line and drops a failed upload", async () => {
