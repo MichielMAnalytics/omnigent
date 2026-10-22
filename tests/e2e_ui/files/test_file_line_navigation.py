@@ -31,10 +31,7 @@ _CENTERED_LINE = """text => {
 def _cited_workspace_file(
     base_url: str, session_id: str, path: str, source: str, message: str
 ) -> Iterator[str]:
-    """Write ``source`` to ``path``, post ``message`` as the assistant, then delete the file.
-
-    :returns: The file's workspace resource URL.
-    """
+    """Yield the resource URL of ``path`` holding ``source``, cited by an assistant ``message``."""
     resource_url = (
         f"{base_url}/v1/sessions/{session_id}/resources/environments/default/filesystem/{path}"
     )
