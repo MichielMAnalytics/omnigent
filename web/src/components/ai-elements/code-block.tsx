@@ -372,12 +372,15 @@ export const CodeBlockContent = ({
   language,
   showLineNumbers = false,
   wrap = false,
+  className,
 }: {
   code: string;
   language: CodeLanguage;
   showLineNumbers?: boolean;
   /** Soft-wrap long lines instead of horizontal scrolling. */
   wrap?: boolean;
+  /** Extra classes for the `<pre>`, e.g. to override its padding or background. */
+  className?: string;
 }) => {
   // Memoized raw tokens for immediate display
   const rawTokens = useMemo(() => createRawTokens(code), [code]);
@@ -420,7 +423,7 @@ export const CodeBlockContent = ({
       data-code-highlighted={tokenized === rawTokens ? "false" : "true"}
     >
       <CodeBlockBody
-        className={wrap ? "whitespace-pre-wrap wrap-anywhere" : undefined}
+        className={cn(wrap && "whitespace-pre-wrap wrap-anywhere", className)}
         showLineNumbers={showLineNumbers}
         tokenized={tokenized}
       />

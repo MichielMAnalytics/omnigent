@@ -215,7 +215,6 @@ export function ToolCard({
             inputJson={inputJson}
             output={output}
             state={state}
-            duration={displayDuration}
           />
         ) : (
           <>
@@ -395,51 +394,36 @@ function ShellTerminalPanel({
   inputJson,
   output,
   state,
-  duration,
 }: {
   command: string;
   cwd: string | null;
   inputJson: string;
   output: string | null;
   state: ToolState;
-  duration: number | undefined;
 }) {
   const [wrap, setWrap] = useState(true);
   const [showRaw, setShowRaw] = useState(false);
   const parsed = useMemo(() => (output === null ? null : parseShellToolOutput(output)), [output]);
+  const hasOutput = parsed !== null && parsed.text.length > 0;
   return (
     <div className="space-y-2">
       <CodeBlockContainer language="bash" data-testid="shell-tool-terminal">
-        {cwd !== null && (
-          <div
-            className="truncate border-b bg-muted/80 px-3 py-1.5 font-mono text-muted-foreground text-xs"
-            title={cwd}
+        <div className="flex items-center justify-between gap-2 px-3 pt-1.5">
+          <span
+            className="min-w-0 truncate font-mono text-muted-foreground text-xs"
+            title={cwd ?? undefined}
           >
             {cwd}
-          </div>
-        )}
-        {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
-        <div className="[&_code>span:first-child]:before:font-semibold [&_code>span:first-child]:before:text-muted-foreground [&_code>span:first-child]:before:content-['$_']">
-          <CodeBlockContent code={command} language="bash" wrap={wrap} />
-        </div>
-        {parsed !== null && (
-          <div className="border-t">
-            {parsed.text.length > 0 ? (
-              <OutputSection
-                output={parsed.text}
-                renderPanel={(text) => <CodeBlockContent code={text} language="ansi" wrap={wrap} />}
-              />
-            ) : (
-              <div className="px-4 py-2 font-mono text-muted-foreground text-ui">(no output)</div>
+          </span>
+          <CodeBlockActions className="my-0 mr-0 gap-1">
+            <WrapTextButton onToggle={() => setWrap((value) => !value)} wrap={wrap} />
+            <CopyTextButton label="Copy command" caption="command" text={command} />
+            {hasOutput && (
+              <CopyTextButton label="Copy output" caption="output" text={stripAnsi(parsed.text)} />
             )}
-          </div>
-        )}
-        <div className="flex items-center justify-between gap-2 border-t bg-muted/80 px-3 py-1 text-muted-foreground text-xs">
-          <ShellStatus state={state} exitCode={parsed?.exitCode ?? null} duration={duration} />
-          <CodeBlockActions>
             <Button
               aria-pressed={showRaw}
-              className={cn("h-6 px-2 text-muted-foreground", showRaw && "text-foreground")}
+              className={cn("h-6 px-1.5 text-muted-foreground", showRaw && "text-foreground")}
               onClick={() => setShowRaw((value) => !value)}
               size="xs"
               type="button"
@@ -448,13 +432,34 @@ function ShellTerminalPanel({
             >
               Raw
             </Button>
-            <WrapTextButton onToggle={() => setWrap((value) => !value)} wrap={wrap} />
-            <CopyTextButton label="Copy command" text={command} />
-            {parsed !== null && parsed.text.length > 0 && (
-              <CopyTextButton label="Copy output" text={stripAnsi(parsed.text)} />
-            )}
           </CodeBlockActions>
         </div>
+        {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
+        <div className="[&_code>span:first-child]:before:font-semibold [&_code>span:first-child]:before:text-muted-foreground [&_code>span:first-child]:before:content-['$_']">
+          <CodeBlockContent
+            code={command}
+            language="bash"
+            wrap={wrap}
+            className={cn(TERMINAL_PRE_CLASS, "pt-1 pb-1")}
+          />
+        </div>
+        {hasOutput && (
+          <OutputSection
+            output={parsed.text}
+            renderPanel={(text) => (
+              <CodeBlockContent
+                code={text}
+                language="ansi"
+                wrap={wrap}
+                className={cn(TERMINAL_PRE_CLASS, "pt-0 pb-2")}
+              />
+            )}
+          />
+        )}
+        {parsed !== null && !hasOutput && (
+          <div className="px-3 pb-2 font-mono text-muted-foreground text-xs">(no output)</div>
+        )}
+        <ShellStatus state={state} exitCode={parsed?.exitCode ?? null} />
       </CodeBlockContainer>
       {showRaw && (
         <CodePanel
@@ -468,20 +473,16 @@ function ShellTerminalPanel({
   );
 }
 
-function ShellStatus({
-  state,
-  exitCode,
-  duration,
-}: {
-  state: ToolState;
-  exitCode: number | null;
-  duration: number | undefined;
-}) {
-  const durationText = duration === undefined ? null : formatToolDuration(duration);
+// Command and output share the panel's own background so the block reads as
+// one continuous terminal surface instead of stacked code panels.
+const TERMINAL_PRE_CLASS = "px-3 !bg-transparent dark:!bg-transparent";
+
+/** Status line under the output; omitted when there is nothing to report. */
+function ShellStatus({ state, exitCode }: { state: ToolState; exitCode: number | null }) {
   let status: ReactNode;
   if (state === "input-available") {
     status = (
-      <span className="flex items-center gap-1.5">
+      <span className="flex items-center gap-1.5 text-muted-foreground">
         <Loader2Icon className="size-3 animate-spin text-info" />
         running
       </span>
@@ -493,16 +494,11 @@ function ShellStatus({
   } else if (state === "output-error") {
     status = <span className="text-destructive">failed</span>;
   } else if (state === "cancelled") {
-    status = "cancelled";
+    status = <span className="text-muted-foreground">cancelled</span>;
   } else {
-    status = null;
+    return null;
   }
-  return (
-    <span className="flex min-w-0 items-center gap-2 tabular-nums">
-      {status}
-      {durationText}
-    </span>
-  );
+  return <div className="px-3 pb-2 font-mono text-xs tabular-nums">{status}</div>;
 }
 
 /**
@@ -686,9 +682,11 @@ function EmptyOutputState({ state }: { state: "output-error" | "cancelled" | "no
 interface CopyTextButtonProps {
   text: string;
   label: string;
+  /** Visible text next to the icon, for when several copy buttons sit together. */
+  caption?: string;
 }
 
-function CopyTextButton({ text, label }: CopyTextButtonProps) {
+function CopyTextButton({ text, label, caption }: CopyTextButtonProps) {
   const [isCopied, setIsCopied] = useState(false);
   const timeoutRef = useRef<number | null>(null);
 
@@ -726,14 +724,15 @@ function CopyTextButton({ text, label }: CopyTextButtonProps) {
       <TooltipTrigger asChild>
         <Button
           aria-label={isCopied ? "Copied" : label}
-          className="size-6 text-muted-foreground"
+          className={cn("text-muted-foreground", caption ? "h-6 gap-1 px-1.5" : "size-6")}
           onClick={copyToClipboard}
-          size="icon-xs"
+          size={caption ? "xs" : "icon-xs"}
           type="button"
           variant="ghost"
           componentId="diagnostics.tool.copy"
         >
           <Icon className="size-3.5" />
+          {caption}
         </Button>
       </TooltipTrigger>
       <TooltipContent>{isCopied ? "Copied" : label}</TooltipContent>

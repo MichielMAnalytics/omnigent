@@ -40,6 +40,8 @@ async function expand(canvasElement: HTMLElement): Promise<void> {
   const trigger = canvasElement.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]');
   if (!trigger) throw new Error("Tool card trigger not found");
   await userEvent.click(trigger);
+  // Snapshot the resting state, not the keyboard focus ring the click leaves.
+  trigger.blur();
 }
 
 export const CompletedFileRead: Story = {
@@ -135,7 +137,9 @@ export const ShellLongLinesScrolling: Story = {
   args: ShellLongLinesWrapped.args,
   play: async ({ canvasElement }) => {
     await expand(canvasElement);
-    await userEvent.click(within(canvasElement).getByRole("button", { name: "Disable word wrap" }));
+    const wrapToggle = within(canvasElement).getByRole("button", { name: "Disable word wrap" });
+    await userEvent.click(wrapToggle);
+    wrapToggle.blur();
   },
 };
 
