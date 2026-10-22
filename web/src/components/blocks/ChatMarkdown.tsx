@@ -394,7 +394,7 @@ function WorkspaceFileLink({
       {...props}
       role="button"
       tabIndex={0}
-      aria-label={shortLabel && linkText ? linkText : undefined}
+      aria-label={shortLabel && linkText ? linkText : props["aria-label"]}
       title={title ?? path}
       data-streamdown="link"
       // Dotted underline distinguishes "opens in the FileViewer" from a link

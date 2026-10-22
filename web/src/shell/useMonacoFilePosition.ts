@@ -39,7 +39,7 @@ export function useMonacoFilePosition({
         const rangeHeight =
           editor.getBottomForLineNumber(endLine.lineNumber) -
           editor.getTopForLineNumber(target.lineNumber);
-        // A range taller than the viewport shows its first line, as the Shiki viewer does.
+        // A range taller than the viewport is revealed from its first line.
         if (rangeHeight <= height)
           editor.revealRangeInCenter(
             citedRange(target.lineNumber, endLine.lineNumber),

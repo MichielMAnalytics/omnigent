@@ -42,9 +42,9 @@ export const WORKSPACE_FILE_LINK_ATTR = "data-omnigent-file";
 // (`notes.md:12-18`), so `skype:555-1234` stays a link.
 const NON_FILE_HREF =
   /^(?:[a-zA-Z][a-zA-Z0-9+-]*:(?!\d+(?::\d+)?$)|[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d+(?::\d+|-\d+)?$)|\/\/|#)/;
-// `:line`, `:line:column`, or the `:start-end` range form.
+// Column and range are mutually exclusive in the colon form.
 const COLON_POSITION_SUFFIX = /:(\d+)(?::(\d+)|-(\d+))?$/;
-// `#Lline`, `#LlineCcolumn`, or a `#Lstart-Lend` range (end column ignored).
+// A range's end column is matched but discarded.
 const HASH_POSITION_SUFFIX = /#L(\d+)(?:C(\d+))?(?:-L?(\d+)(?:C\d+)?)?$/i;
 
 export interface WorkspaceFileCitation {

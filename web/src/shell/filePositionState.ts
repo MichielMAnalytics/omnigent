@@ -22,9 +22,17 @@ export function isFilePositionDismissed(position: FilePosition | undefined): boo
   return !!position && dismissed.has(position);
 }
 
-/** The position an `openFile` call cites, keeping `endLine` only when it follows `line`. */
+/** The valid position a citation names; `endLine` is kept only when it follows `line`. */
 export function citedFilePosition(options?: OpenFileOptions): FilePosition | undefined {
-  if (!options?.line) return undefined;
-  const { line, column, endLine } = options;
-  return { line, column, ...(endLine && endLine > line ? { endLine } : {}) };
+  const { line, column, endLine } = options ?? {};
+  if (!isPositiveInteger(line)) return undefined;
+  return {
+    line,
+    ...(isPositiveInteger(column) ? { column } : {}),
+    ...(isPositiveInteger(endLine) && endLine > line ? { endLine } : {}),
+  };
+}
+
+function isPositiveInteger(value: number | undefined): value is number {
+  return Number.isSafeInteger(value) && value! > 0;
 }

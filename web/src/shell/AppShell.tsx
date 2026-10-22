@@ -398,19 +398,13 @@ function AppShellImpl() {
   const citationEndLine = searchParams.get("endLine");
   // Keep URL requests stable across viewer remounts, just like citation clicks.
   const urlNavigation = useMemo(() => {
-    const line = Number(citationLine);
-    const column = Number(citationColumn);
-    const endLine = Number(citationEndLine);
-    if (!citationPath || !Number.isSafeInteger(line) || line < 1) return undefined;
-    return {
-      conversationId,
-      path: citationPath,
-      position: {
-        line,
-        ...(Number.isSafeInteger(column) && column > 0 ? { column } : {}),
-        ...(Number.isSafeInteger(endLine) && endLine > line ? { endLine } : {}),
-      },
-    };
+    const position = citedFilePosition({
+      line: Number(citationLine),
+      column: Number(citationColumn),
+      endLine: Number(citationEndLine),
+    });
+    if (!citationPath || !position) return undefined;
+    return { conversationId, path: citationPath, position };
   }, [conversationId, citationPath, citationLine, citationColumn, citationEndLine]);
   const filePosition =
     fileNavigation?.conversationId === conversationId && fileNavigation?.path === selectedFilePath

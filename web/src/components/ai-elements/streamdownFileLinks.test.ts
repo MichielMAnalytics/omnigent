@@ -158,6 +158,8 @@ describe("markWorkspaceFileLinks", () => {
     ["SMS:555-0100", "uppercase phone scheme"],
     ["skype:555-1234", "scheme without an extension before a range"],
     ["geo:1-2", "short scheme shaped like a line range"],
+    ["mailto:555-1234", "mail scheme shaped like a line range"],
+    ["Makefile:12-18", "extensionless name before a range, which stays a link as on main"],
     ["#section-two", "in-page anchor"],
     ["javascript:alert(1)", "script scheme"],
     ["docs/page.md?raw=1", "path carrying a query"],
