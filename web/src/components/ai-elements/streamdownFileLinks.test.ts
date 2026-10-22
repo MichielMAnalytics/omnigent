@@ -159,7 +159,7 @@ describe("markWorkspaceFileLinks", () => {
     ["skype:555-1234", "scheme without an extension before a range"],
     ["geo:1-2", "short scheme shaped like a line range"],
     ["mailto:555-1234", "mail scheme shaped like a line range"],
-    ["Makefile:12-18", "extensionless name before a range, which stays a link as on main"],
+    ["Makefile:12-18", "extensionless name before a range stays a link"],
     ["#section-two", "in-page anchor"],
     ["javascript:alert(1)", "script scheme"],
     ["docs/page.md?raw=1", "path carrying a query"],
@@ -216,6 +216,10 @@ describe("splitWorkspaceFileCitation", () => {
     const citation = splitWorkspaceFileCitation(text);
     expect(citation.path).toBe("src/Main.scala");
     expect(citation).not.toHaveProperty("endLine");
+  });
+
+  it("does not read a colon range with columns, which only the hash form supports", () => {
+    expect(splitWorkspaceFileCitation("src/Main.scala:12:3-15:2")).not.toHaveProperty("endLine");
   });
 
   it("drops the range of an invalid zero start line", () => {

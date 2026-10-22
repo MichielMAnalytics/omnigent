@@ -39,7 +39,7 @@ export const WORKSPACE_FILE_LINK_ATTR = "data-omnigent-file";
 
 // A protocol, protocol-relative or in-page href, never a workspace file. A `:12`
 // position is a file citation; a `:12-18` range only after a file extension
-// (`notes.md:12-18`), so `skype:555-1234` stays a link.
+// (`notes.md:12-18`), so `skype:555-1234` (and `Makefile:12-18`) stays a link.
 const NON_FILE_HREF =
   /^(?:[a-zA-Z][a-zA-Z0-9+-]*:(?!\d+(?::\d+)?$)|[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d+(?::\d+|-\d+)?$)|\/\/|#)/;
 // Column and range are mutually exclusive in the colon form.
@@ -73,7 +73,7 @@ export function splitWorkspaceFileCitation(text: string): WorkspaceFileCitation 
   };
 }
 
-/** File name plus position as written (`src/Main.scala:68-72` → `Main.scala:68-72`); null without a directory. */
+/** File name plus cited position, or null when the text has no directory. */
 export function shortFileCitationLabel(text: string): string | null {
   const { path } = splitWorkspaceFileCitation(text);
   const slash = path.lastIndexOf("/");

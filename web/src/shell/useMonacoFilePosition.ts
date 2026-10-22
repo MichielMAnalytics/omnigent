@@ -77,13 +77,21 @@ export function useMonacoFilePosition({
   useEffect(() => {
     const editor = editorRef.current;
     if (!mounted || !editor || !position?.endLine) return;
-    const highlight = editor.createDecorationsCollection([
+    const decorations = [
       {
         range: citedRange(position.line, position.endLine),
         options: { isWholeLine: true, className: CITED_LINES_CLASS_NAME },
       },
-    ]);
-    return () => highlight.clear();
+    ];
+    const highlight = editor.createDecorationsCollection(decorations);
+    // Replacing the whole value (an external file reload) drops model decorations.
+    const reload = editor.onDidChangeModelContent((event) => {
+      if (event.isFlush) highlight.set(decorations);
+    });
+    return () => {
+      reload.dispose();
+      highlight.clear();
+    };
   }, [editorRef, mounted, position]);
 }
 

@@ -39,8 +39,12 @@ interface FakeEditor {
   getTopForLineNumber: (lineNumber: number) => number;
   getBottomForLineNumber: (lineNumber: number) => number;
   setPosition: ReturnType<typeof vi.fn>;
+  onDidChangeModelContent: (listener: (event: { isFlush: boolean }) => void) => {
+    dispose: () => void;
+  };
   createDecorationsCollection: ReturnType<typeof vi.fn>;
   clearDecorations: ReturnType<typeof vi.fn>;
+  setDecorations: ReturnType<typeof vi.fn>;
   scrollTops: number[];
 }
 
@@ -51,9 +55,13 @@ function makeFakeEditor(initial: string, lineCount: number): FakeEditor {
   let width = 600;
   let height = 800;
   const layouts = new Set<() => void>();
+  const contentListeners = new Set<(event: { isFlush: boolean }) => void>();
   const editor: FakeEditor = {
     getValue: () => initial,
-    setValue: () => {},
+    // Like Monaco, replacing the whole value reports a flush.
+    setValue: () => {
+      for (const listener of contentListeners) listener({ isFlush: true });
+    },
     getModel: () => ({
       setEOL: () => {},
       getLineCount: () => lineCount,
@@ -90,8 +98,16 @@ function makeFakeEditor(initial: string, lineCount: number): FakeEditor {
     getTopForLineNumber: (lineNumber) => (lineNumber - 1) * LINE_HEIGHT,
     getBottomForLineNumber: (lineNumber) => lineNumber * LINE_HEIGHT,
     setPosition: vi.fn(),
-    createDecorationsCollection: vi.fn(() => ({ clear: editor.clearDecorations })),
+    onDidChangeModelContent: (listener) => {
+      contentListeners.add(listener);
+      return { dispose: () => contentListeners.delete(listener) };
+    },
+    createDecorationsCollection: vi.fn(() => ({
+      clear: editor.clearDecorations,
+      set: editor.setDecorations,
+    })),
     clearDecorations: vi.fn(),
+    setDecorations: vi.fn(),
     scrollTops: [],
   };
   return editor;
@@ -315,6 +331,16 @@ describe("MonacoCodeEditor cited-line reveal", () => {
     expect(fakeEditor!.revealLineNearTop).toHaveBeenCalledWith(120, 1);
     expect(fakeEditor!.revealRangeInCenter).not.toHaveBeenCalled();
     expect(fakeEditor!.setPosition).toHaveBeenLastCalledWith({ lineNumber: 120, column: 1 });
+  });
+
+  it("re-applies the cited-range highlight after the file's content is replaced", async () => {
+    const range = { startLineNumber: 120, startColumn: 1, endLineNumber: 130, endColumn: 1 };
+    await renderMounted(makeEditor(120, { endLine: 130 }));
+    act(() => fakeEditor!.setValue("reloaded"));
+    expect(fakeEditor!.setDecorations).toHaveBeenCalledWith([
+      { range, options: { isWholeLine: true, className: "oa-cited-lines" } },
+    ]);
+    expect(fakeEditor!.clearDecorations).not.toHaveBeenCalled();
   });
 
   it("clears the cited-range highlight when the editor unmounts", async () => {

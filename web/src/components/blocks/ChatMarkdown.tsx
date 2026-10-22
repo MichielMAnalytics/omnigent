@@ -79,8 +79,8 @@ function useWorkspaceFileOpener(text: string, explicitLink = false): WorkspaceFi
   // Agents cite a file with the position they mean, `docs/notes.md:12` or
   // `:12:7`. The position is not part of the filename, so no such path is ever
   // in the changed-files list or on disk; drop it before resolving, but keep
-  // the line so the viewer can land on the cited change. The span still
-  // displays the citation the agent wrote.
+  // the line so the viewer can land on the cited change. The link shows the file
+  // name and position; the full citation stays its accessible name.
   const citation = splitWorkspaceFileCitation(text);
   const cited = citation.path;
   const citedLine = citation.line;
