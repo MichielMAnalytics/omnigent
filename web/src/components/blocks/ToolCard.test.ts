@@ -236,6 +236,88 @@ describe("ToolCard rendering", () => {
   });
 });
 
+describe("ToolCard shell terminal panel", () => {
+  function expand(container: HTMLElement) {
+    fireEvent.click(container.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]')!);
+  }
+
+  it("shows the unwrapped command terminal-style in the row and the panel", () => {
+    // WHY: shell calls should read like a terminal, not a JSON payload with
+    // the login-shell wrapper and escaped quotes.
+    const { container } = renderCard({
+      name: "shell",
+      arguments: { command: "/bin/zsh -lc 'pnpm install'", cwd: "/repo/app" },
+      output: "Done in 1.2s",
+      state: "output-available",
+    });
+    const trigger = container.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]')!;
+    expect(trigger).toHaveAttribute("title", "pnpm install");
+    expect(trigger.textContent).toContain("$ pnpm install");
+
+    expand(container);
+    const terminal = screen.getByTestId("shell-tool-terminal");
+    expect(terminal.textContent).toContain("/repo/app");
+    expect(terminal.textContent).toContain("$ pnpm install");
+    expect(terminal.textContent).toContain("Done in 1.2s");
+    expect(screen.queryByText("Parameters")).toBeNull();
+  });
+
+  it("reveals the raw parameters JSON on demand", () => {
+    // WHY: the original arguments stay available for debugging.
+    const { container } = renderCard({
+      name: "Bash",
+      arguments: { command: "ls" },
+      output: "a.txt",
+      state: "output-available",
+    });
+    expand(container);
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+    expect(screen.getByText("Parameters")).toBeInTheDocument();
+  });
+
+  it.each([
+    [JSON.stringify({ stdout: "", stderr: "boom", exit_code: 3 }), "exit 3", "boom"],
+    ["missing\n[exit code: 1]", "exit 1", "missing"],
+  ])("reports the exit code parsed from %s", (output, status, text) => {
+    // WHY: sys_os_shell and Codex report exit codes in different shapes; the
+    // footer must show both, and the suffix must not leak into the output.
+    const { container } = renderCard({
+      name: output.startsWith("{") ? "sys_os_shell" : "shell",
+      arguments: { command: "make" },
+      output,
+      state: "output-available",
+    });
+    expand(container);
+    const terminal = screen.getByTestId("shell-tool-terminal");
+    expect(screen.getByText(status)).toBeInTheDocument();
+    expect(terminal.textContent).toContain(text);
+    expect(terminal.textContent).not.toContain("[exit code");
+  });
+
+  it("shows a running status while the command has no output yet", () => {
+    const { container } = renderCard({
+      name: "Bash",
+      arguments: { command: "sleep 5" },
+      output: null,
+      state: "input-available",
+    });
+    expand(container);
+    expect(screen.getByText("running")).toBeInTheDocument();
+  });
+
+  it("dims a leading env assignment in the collapsed row", () => {
+    // WHY: long PATH=... prefixes otherwise bury the program being run.
+    const { container } = renderCard({
+      name: "Bash",
+      arguments: { command: 'PATH="/opt/bin:$PATH" pnpm test' },
+      output: "",
+      state: "output-available",
+    });
+    const dimmed = container.querySelector(".opacity-60");
+    expect(dimmed?.textContent).toBe('PATH="/opt/bin:$PATH" ');
+  });
+});
+
 describe("ToolGroupSummary", () => {
   function toolItem(callId: string, name: string): RenderItem {
     return {

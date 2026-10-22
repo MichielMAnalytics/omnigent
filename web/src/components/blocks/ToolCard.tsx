@@ -21,6 +21,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CodeBlock,
   CodeBlockActions,
+  CodeBlockContainer,
+  CodeBlockContent,
   CodeBlockHeader,
   CodeBlockTitle,
 } from "@/components/ai-elements/code-block";
@@ -29,12 +31,15 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { RenderItem, ToolState } from "@/lib/renderItems";
+import { parseShellToolOutput } from "@/lib/shellToolOutput";
 import { iconForTool } from "@/lib/toolIcon";
 import {
   type ToolRunCall,
   type ToolTitle,
   formatToolRunLabel,
   formatToolTitle,
+  shellCommandFor,
+  splitEnvPrefix,
 } from "@/lib/toolTitle";
 import { resolveChatFilePath } from "@/hooks/useWorkspaceChangedFiles";
 import { useFileViewer, useWorkspacePaths } from "@/shell/FileViewerContext";
@@ -174,6 +179,7 @@ export function ToolCard({
   duration,
 }: ToolCardProps) {
   const title = useMemo(() => formatToolTitle(name, args, argsSummary), [name, args, argsSummary]);
+  const shellCommand = useMemo(() => shellCommandFor(name, args), [name, args]);
   const inputJson = useMemo(() => JSON.stringify(args, null, 2), [args]);
   const formattedOutput = useMemo(
     () => (output === null ? null : prettyPrintIfJson(output)),
@@ -202,17 +208,30 @@ export function ToolCard({
         onBodyClick={onBodyClick}
       />
       <CollapsibleContent className="mt-1 ml-2 space-y-2 border-l pl-3 py-1 data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=open]:animate-in">
-        <CodePanel
-          title="Parameters"
-          text={inputJson}
-          copyText={inputJson}
-          copyLabel="Copy parameters"
-        />
-        {formattedOutput !== null && <OutputSection output={formattedOutput} />}
-        {formattedOutput === null && state === "input-available" && (
-          <ToolPendingOutput duration={displayDuration} />
+        {shellCommand !== null ? (
+          <ShellTerminalPanel
+            command={shellCommand}
+            cwd={typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : null}
+            inputJson={inputJson}
+            output={output}
+            state={state}
+            duration={displayDuration}
+          />
+        ) : (
+          <>
+            <CodePanel
+              title="Parameters"
+              text={inputJson}
+              copyText={inputJson}
+              copyLabel="Copy parameters"
+            />
+            {formattedOutput !== null && <OutputSection output={formattedOutput} />}
+            {formattedOutput === null && state === "input-available" && (
+              <ToolPendingOutput duration={displayDuration} />
+            )}
+          </>
         )}
-        {formattedOutput === null &&
+        {output === null &&
           (state === "output-error" || state === "cancelled" || state === "no-output") && (
             <EmptyOutputState state={state} />
           )}
@@ -317,7 +336,9 @@ function ToolTriggerRow({
       <span className="min-w-0 flex-1 truncate">
         {title.verb !== null && <span className="font-semibold text-foreground">{title.verb}</span>}
         {title.verb !== null && title.body.length > 0 && " "}
-        {onBodyClick ? (
+        {title.isShellCommand === true ? (
+          <ShellCommandLine command={title.body} />
+        ) : onBodyClick ? (
           // Use <span role="link"> instead of <button> to avoid nesting
           // interactive elements — CollapsibleTrigger already renders as
           // a <button>, and nested buttons are invalid HTML.
@@ -348,6 +369,136 @@ function ToolTriggerRow({
       )}
       <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
     </CollapsibleTrigger>
+  );
+}
+
+/** Collapsed-row command, styled like a terminal prompt line. */
+function ShellCommandLine({ command }: { command: string }) {
+  const { env, rest } = splitEnvPrefix(command);
+  return (
+    <span className="font-mono text-[0.92em]">
+      <span className="font-semibold text-foreground">$</span>{" "}
+      {env.length > 0 && <span className="opacity-60">{env}</span>}
+      {rest}
+    </span>
+  );
+}
+
+/**
+ * Expanded view for shell tools: the working directory, `$ command`, and
+ * the output in one terminal-like block, with exit status in the footer.
+ * The raw argument JSON stays one click away for debugging.
+ */
+function ShellTerminalPanel({
+  command,
+  cwd,
+  inputJson,
+  output,
+  state,
+  duration,
+}: {
+  command: string;
+  cwd: string | null;
+  inputJson: string;
+  output: string | null;
+  state: ToolState;
+  duration: number | undefined;
+}) {
+  const [wrap, setWrap] = useState(true);
+  const [showRaw, setShowRaw] = useState(false);
+  const parsed = useMemo(() => (output === null ? null : parseShellToolOutput(output)), [output]);
+  return (
+    <div className="space-y-2">
+      <CodeBlockContainer language="shellsession" data-testid="shell-tool-terminal">
+        {cwd !== null && (
+          <div
+            className="truncate border-b bg-muted/80 px-3 py-1.5 font-mono text-muted-foreground text-xs"
+            title={cwd}
+          >
+            {cwd}
+          </div>
+        )}
+        <CodeBlockContent code={`$ ${command}`} language="shellsession" wrap={wrap} />
+        {parsed !== null && (
+          <div className="border-t">
+            {parsed.text.length > 0 ? (
+              <OutputSection
+                output={parsed.text}
+                renderPanel={(text) => <CodeBlockContent code={text} language="log" wrap={wrap} />}
+              />
+            ) : (
+              <div className="px-4 py-2 font-mono text-muted-foreground text-ui">(no output)</div>
+            )}
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2 border-t bg-muted/80 px-3 py-1 text-muted-foreground text-xs">
+          <ShellStatus state={state} exitCode={parsed?.exitCode ?? null} duration={duration} />
+          <CodeBlockActions>
+            <Button
+              aria-pressed={showRaw}
+              className={cn("h-6 px-2 text-muted-foreground", showRaw && "text-foreground")}
+              onClick={() => setShowRaw((value) => !value)}
+              size="xs"
+              type="button"
+              variant="ghost"
+              componentId="diagnostics.tool.toggle_raw_parameters"
+            >
+              Raw
+            </Button>
+            <WrapTextButton onToggle={() => setWrap((value) => !value)} wrap={wrap} />
+            <CopyTextButton label="Copy command" text={command} />
+            {parsed !== null && parsed.text.length > 0 && (
+              <CopyTextButton label="Copy output" text={parsed.text} />
+            )}
+          </CodeBlockActions>
+        </div>
+      </CodeBlockContainer>
+      {showRaw && (
+        <CodePanel
+          title="Parameters"
+          text={inputJson}
+          copyText={inputJson}
+          copyLabel="Copy parameters"
+        />
+      )}
+    </div>
+  );
+}
+
+function ShellStatus({
+  state,
+  exitCode,
+  duration,
+}: {
+  state: ToolState;
+  exitCode: number | null;
+  duration: number | undefined;
+}) {
+  const durationText = duration === undefined ? null : formatToolDuration(duration);
+  let status: ReactNode;
+  if (state === "input-available") {
+    status = (
+      <span className="flex items-center gap-1.5">
+        <Loader2Icon className="size-3 animate-spin text-info" />
+        running
+      </span>
+    );
+  } else if (exitCode !== null) {
+    status = (
+      <span className={exitCode === 0 ? "text-success" : "text-destructive"}>exit {exitCode}</span>
+    );
+  } else if (state === "output-error") {
+    status = <span className="text-destructive">failed</span>;
+  } else if (state === "cancelled") {
+    status = "cancelled";
+  } else {
+    status = null;
+  }
+  return (
+    <span className="flex min-w-0 items-center gap-2 tabular-nums">
+      {status}
+      {durationText}
+    </span>
   );
 }
 
@@ -435,7 +586,14 @@ function WrapTextButton({ wrap, onToggle }: { wrap: boolean; onToggle: () => voi
   );
 }
 
-function OutputSection({ output }: { output: string }) {
+function OutputSection({
+  output,
+  renderPanel,
+}: {
+  output: string;
+  /** Renders the (possibly truncated) text; defaults to a titled Output panel. */
+  renderPanel?: (text: string) => ReactNode;
+}) {
   const [isExpanded, setIsExpanded] = useState(false);
   useEffect(() => setIsExpanded(false), [output]);
 
@@ -453,7 +611,11 @@ function OutputSection({ output }: { output: string }) {
           (!canExpand || isExpanded) && "max-h-[36rem] overflow-auto",
         )}
       >
-        <CodePanel title="Output" text={preview.text} copyText={output} copyLabel="Copy output" />
+        {renderPanel ? (
+          renderPanel(preview.text)
+        ) : (
+          <CodePanel title="Output" text={preview.text} copyText={output} copyLabel="Copy output" />
+        )}
         {canExpand && !isExpanded && (
           <div className="pointer-events-none absolute inset-x-px bottom-px h-16 rounded-b-md bg-gradient-to-t from-background to-transparent" />
         )}

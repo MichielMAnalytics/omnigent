@@ -22,11 +22,14 @@
  *   string when the title is verb-only (e.g. "Read inbox").
  * - `filePath`: set when the call targets exactly one file, as the agent
  *   passed it (relative or absolute); the trigger row links it.
+ * - `isShellCommand`: set when `body` is a shell command line; the
+ *   trigger row renders it terminal-style (`$ cmd`, monospace).
  */
 export interface ToolTitle {
   verb: string | null;
   body: string;
   filePath?: string;
+  isShellCommand?: boolean;
 }
 
 type ArgFormatter = (args: Record<string, unknown>) => ToolTitle | null;
@@ -34,10 +37,7 @@ type ArgFormatter = (args: Record<string, unknown>) => ToolTitle | null;
 const FORMATTERS: Record<string, ArgFormatter> = {
   // OS-environment tools — drop the noisy `sys_os_*` prefix; the verb
   // alone communicates the action.
-  sys_os_shell: (args) => {
-    const cmd = asString(args.command);
-    return cmd === null ? null : { verb: null, body: cmd };
-  },
+  sys_os_shell: (args) => shellTitle(asString(args.command)),
   sys_os_read: (args) => withPath("Read", args.path),
   sys_os_write: (args) => withPath("Write", args.path),
   sys_os_edit: (args) => withPath("Edit", args.path),
@@ -136,8 +136,7 @@ const FORMATTERS: Record<string, ArgFormatter> = {
   Bash: (args) => {
     const desc = asString(args.description);
     if (desc !== null) return { verb: null, body: desc };
-    const cmd = asString(args.command);
-    return cmd === null ? null : { verb: null, body: cmd };
+    return shellTitle(asString(args.command));
   },
   Read: (args) => withPath("Read", args.file_path),
   Write: (args) => withPath("Write", args.file_path),
@@ -170,7 +169,7 @@ const FORMATTERS: Record<string, ArgFormatter> = {
   // shell (`/bin/bash -lc '...'`); show the inner command like its TUI.
   shell: (args) => {
     const cmd = asString(args.command);
-    return cmd === null ? null : { verb: null, body: unwrapShellCommand(cmd) };
+    return shellTitle(cmd === null ? null : unwrapShellCommand(cmd));
   },
   apply_patch: (args) => {
     const changes = Array.isArray(args.changes) ? args.changes : null;
@@ -186,10 +185,7 @@ const FORMATTERS: Record<string, ArgFormatter> = {
 
   // Pi / OpenCode native harness tools (lowercase names). OpenCode
   // passes `filePath`, Pi passes `path`.
-  bash: (args) => {
-    const cmd = asString(args.command);
-    return cmd === null ? null : { verb: null, body: cmd };
-  },
+  bash: (args) => shellTitle(asString(args.command)),
   read: (args) => withPath("Read", args.filePath ?? args.path),
   edit: (args) => withPath("Edit", args.filePath ?? args.path),
   write: (args) => withPath("Write", args.filePath ?? args.path),
@@ -300,7 +296,7 @@ function stripOmnigentPrefix(name: string): string {
 const SHELL_WRAPPER_RE = /^(?:\S+\/)?(?:bash|zsh|sh|dash|fish)\s+-l?c\s+([\s\S]+)$/;
 
 /** Peel a login-shell wrapper (and its quotes) off a command string. */
-function unwrapShellCommand(command: string): string {
+export function unwrapShellCommand(command: string): string {
   const match = SHELL_WRAPPER_RE.exec(command.trim());
   if (match === null) return command.trim();
   const inner = match[1]!.trim();
@@ -309,6 +305,37 @@ function unwrapShellCommand(command: string): string {
     return inner.slice(1, -1).trim();
   }
   return inner;
+}
+
+/** Whether `name` is a shell-command tool in any harness (Bash, shell, sys_os_shell...). */
+export function isShellTool(name: string): boolean {
+  return RUN_CATEGORIES[stripOmnigentPrefix(name)] === "shell";
+}
+
+/**
+ * The command line a shell tool call ran, with any login-shell wrapper
+ * peeled off, or `null` when the call is not a shell tool or carries no
+ * string `command` argument.
+ */
+export function shellCommandFor(name: string, args: Record<string, unknown>): string | null {
+  if (!isShellTool(name)) return null;
+  const command = asString(args.command);
+  return command === null ? null : unwrapShellCommand(command);
+}
+
+// Leading `NAME=value` assignments, with quoted values, e.g.
+// `PATH="$HOME/bin:$PATH" FOO=1 make` -> `PATH="$HOME/bin:$PATH" FOO=1 `.
+const ENV_PREFIX_RE = /^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\S*)\s+)+/;
+
+/**
+ * Split leading environment assignments off a command so the row can dim
+ * them and let the program name stand out. `env` keeps its trailing
+ * whitespace; `env + rest` always equals the input.
+ */
+export function splitEnvPrefix(command: string): { env: string; rest: string } {
+  const match = ENV_PREFIX_RE.exec(command);
+  if (match === null || match[0].length === command.length) return { env: "", rest: command };
+  return { env: match[0], rest: command.slice(match[0].length) };
 }
 
 function categorizeCall(call: ToolRunCall): RunCategory | "other" {
@@ -357,6 +384,10 @@ function asString(v: unknown): string | null {
 
 function asNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function shellTitle(command: string | null): ToolTitle | null {
+  return command === null ? null : { verb: null, body: command, isShellCommand: true };
 }
 
 function verbOnly(verb: string): ToolTitle {

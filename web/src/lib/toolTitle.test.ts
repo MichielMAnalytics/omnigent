@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatToolRunLabel, formatToolTitle } from "./toolTitle";
+import { formatToolRunLabel, formatToolTitle, shellCommandFor, splitEnvPrefix } from "./toolTitle";
 
 describe("formatToolTitle", () => {
   it("strips sys_os_shell down to the command string with no bold verb", () => {
     expect(formatToolTitle("sys_os_shell", { command: "ls -la" })).toEqual({
       verb: null,
       body: "ls -la",
+      isShellCommand: true,
     });
   });
 
@@ -146,6 +147,7 @@ describe("formatToolTitle", () => {
     expect(formatToolTitle("Bash", { command: "ls docs" })).toEqual({
       verb: null,
       body: "ls docs",
+      isShellCommand: true,
     });
     expect(formatToolTitle("Read", { file_path: "/repo/README.md" })).toEqual({
       verb: "Read",
@@ -175,6 +177,7 @@ describe("formatToolTitle", () => {
     expect(formatToolTitle("shell", { command: "/bin/bash -lc 'cat notes.txt'" })).toEqual({
       verb: null,
       body: "cat notes.txt",
+      isShellCommand: true,
     });
     expect(
       formatToolTitle("apply_patch", {
@@ -201,6 +204,7 @@ describe("formatToolTitle", () => {
     expect(formatToolTitle("bash", { command: "cat notes.txt" })).toEqual({
       verb: null,
       body: "cat notes.txt",
+      isShellCommand: true,
     });
     expect(formatToolTitle("read", { filePath: "/repo/notes.txt" })).toEqual({
       verb: "Read",
@@ -309,5 +313,34 @@ describe("formatToolRunLabel", () => {
     expect(formatToolRunLabel([call("turn_diff")])).toBe("Called 1 tool");
     expect(formatToolRunLabel([call("TodoWrite")])).toBe("Called 1 tool");
     expect(formatToolRunLabel([call("alpha_tool"), call("beta_tool")])).toBe("Called 2 tools");
+  });
+});
+
+describe("shellCommandFor", () => {
+  it("returns the unwrapped command for shell tools only", () => {
+    expect(shellCommandFor("shell", { command: "/bin/zsh -lc 'pnpm install'" })).toBe(
+      "pnpm install",
+    );
+    expect(shellCommandFor("mcp__omnigent__sys_os_shell", { command: "ls -la" })).toBe("ls -la");
+    expect(shellCommandFor("Bash", { command: "git status", description: "Check" })).toBe(
+      "git status",
+    );
+    expect(shellCommandFor("Read", { command: "ls" })).toBeNull();
+    expect(shellCommandFor("Bash", { command: 42 })).toBeNull();
+  });
+});
+
+describe("splitEnvPrefix", () => {
+  it.each([
+    [
+      'PATH="$HOME/bin:$PATH" pnpm install',
+      { env: 'PATH="$HOME/bin:$PATH" ', rest: "pnpm install" },
+    ],
+    ["FOO=1 BAR='a b' make test", { env: "FOO=1 BAR='a b' ", rest: "make test" }],
+    ["git status", { env: "", rest: "git status" }],
+    // A bare assignment is the whole command, not a prefix.
+    ["FOO=1", { env: "", rest: "FOO=1" }],
+  ])("splits %s", (command, expected) => {
+    expect(splitEnvPrefix(command)).toEqual(expected);
   });
 });
