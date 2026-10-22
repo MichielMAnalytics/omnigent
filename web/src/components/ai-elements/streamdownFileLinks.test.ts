@@ -153,6 +153,8 @@ describe("markWorkspaceFileLinks", () => {
     ["http://localhost:3000/x.md", "plain http URL"],
     ["//cdn.example.com/x.md", "protocol-relative URL"],
     ["mailto:someone@example.com", "mailto"],
+    ["tel:555-1234", "phone number shaped like a line range"],
+    ["SMS:555-0100", "uppercase phone scheme"],
     ["#section-two", "in-page anchor"],
     ["javascript:alert(1)", "script scheme"],
     ["docs/page.md?raw=1", "path carrying a query"],

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import httpx
 import pytest
@@ -25,36 +27,45 @@ _CENTERED_LINE = """text => {
 }"""
 
 
+@contextmanager
+def _cited_workspace_file(
+    base_url: str, session_id: str, path: str, source: str, message: str
+) -> Iterator[str]:
+    """Write ``source`` to ``path``, post ``message`` as the assistant, then delete the file.
+
+    :returns: The file's workspace resource URL.
+    """
+    resource_url = (
+        f"{base_url}/v1/sessions/{session_id}/resources/environments/default/filesystem/{path}"
+    )
+    httpx.put(
+        resource_url, json={"content": source, "encoding": "utf-8"}, timeout=10
+    ).raise_for_status()
+    try:
+        served = httpx.get(resource_url, timeout=10)
+        served.raise_for_status()
+        assert served.json()["content"] == source
+        httpx.post(
+            f"{base_url}/v1/sessions/{session_id}/events",
+            json={
+                "type": "external_assistant_message",
+                "data": {"agent": "hello_world", "text": message},
+            },
+            timeout=10,
+        ).raise_for_status()
+        yield resource_url
+    finally:
+        httpx.delete(resource_url, timeout=10).raise_for_status()
+
+
 def test_chat_citation_opens_real_file_resource_at_line(
     page: Page, seeded_session: tuple[str, str]
 ) -> None:
     """The backend serves the cited file and Chromium reveals its requested line."""
     base_url, session_id = seeded_session
-    resource_url = (
-        f"{base_url}/v1/sessions/{session_id}/resources/environments/default/"
-        f"filesystem/{_FILE_PATH}"
-    )
-    created = False
-    try:
-        written = httpx.put(
-            resource_url, json={"content": _SOURCE, "encoding": "utf-8"}, timeout=10
-        )
-        written.raise_for_status()
-        created = True
-        served = httpx.get(resource_url, timeout=10)
-        served.raise_for_status()
-        assert served.json()["content"] == _SOURCE
-
-        message = httpx.post(
-            f"{base_url}/v1/sessions/{session_id}/events",
-            json={
-                "type": "external_assistant_message",
-                "data": {"agent": "hello_world", "text": f"[Line 350]({_FILE_PATH}:350)"},
-            },
-            timeout=10,
-        )
-        message.raise_for_status()
-
+    with _cited_workspace_file(
+        base_url, session_id, _FILE_PATH, _SOURCE, f"[Line 350]({_FILE_PATH}:350)"
+    ) as resource_url:
         page.set_viewport_size({"width": 1600, "height": 1000})
         page.goto(f"{base_url}/c/{session_id}")
         citation = page.get_by_role("button", name="Line 350", exact=True)
@@ -69,9 +80,6 @@ def test_chat_citation_opens_real_file_resource_at_line(
         viewer = page.locator('[data-testid="file-viewer"]:visible')
         expect(viewer.locator(".monaco-editor")).to_be_visible(timeout=30_000)
         page.wait_for_function(_CENTERED_LINE, arg=_LINES[349], timeout=30_000)
-    finally:
-        if created:
-            httpx.delete(resource_url, timeout=10).raise_for_status()
 
 
 _RANGE_FILE_PATH = "sql/core/SQLFunctionExpression.scala"
@@ -83,28 +91,10 @@ def test_chat_range_citation_shows_file_name_and_highlights_range(
 ) -> None:
     """A `path:start-end` citation shows its file name and opens with the range marked."""
     base_url, session_id = seeded_session
-    resource_url = (
-        f"{base_url}/v1/sessions/{session_id}/resources/environments/default/"
-        f"filesystem/{_RANGE_FILE_PATH}"
-    )
     citation_text = f"{_RANGE_FILE_PATH}:68-72"
-    created = False
-    try:
-        httpx.put(
-            resource_url,
-            json={"content": "\n".join(_RANGE_LINES), "encoding": "utf-8"},
-            timeout=10,
-        ).raise_for_status()
-        created = True
-        httpx.post(
-            f"{base_url}/v1/sessions/{session_id}/events",
-            json={
-                "type": "external_assistant_message",
-                "data": {"agent": "hello_world", "text": f"See `{citation_text}`."},
-            },
-            timeout=10,
-        ).raise_for_status()
-
+    with _cited_workspace_file(
+        base_url, session_id, _RANGE_FILE_PATH, "\n".join(_RANGE_LINES), f"See `{citation_text}`."
+    ):
         page: Page = request.getfixturevalue("page")
         page.set_viewport_size({"width": 1600, "height": 1000})
         page.goto(f"{base_url}/c/{session_id}")
@@ -118,6 +108,3 @@ def test_chat_range_citation_shows_file_name_and_highlights_range(
         expect(viewer.locator(".monaco-editor")).to_be_visible(timeout=30_000)
         expect(viewer.locator(".oa-cited-lines")).to_have_count(5, timeout=30_000)
         page.wait_for_function(_CENTERED_LINE, arg=_RANGE_LINES[69], timeout=30_000)
-    finally:
-        if created:
-            httpx.delete(resource_url, timeout=10).raise_for_status()

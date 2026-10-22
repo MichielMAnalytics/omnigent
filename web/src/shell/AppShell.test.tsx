@@ -5296,6 +5296,9 @@ describe("file navigation request precedence", () => {
         >
           Cite AGENTS range
         </button>
+        <button type="button" onClick={() => openFile?.("AGENTS.md", { line: 10, endLine: 10 })}>
+          Cite AGENTS empty range
+        </button>
       </>
     );
   }
@@ -5390,6 +5393,14 @@ describe("file navigation request precedence", () => {
     expect(screen.getByTestId("url-params")).toHaveTextContent("endLine=14");
 
     fireEvent.click(screen.getByRole("button", { name: "Cite AGENTS" }));
+    expect(screen.getByTestId("file-viewer-inline")).not.toHaveAttribute("data-end-line");
+    expect(screen.getByTestId("url-params")).not.toHaveTextContent("endLine=");
+  });
+
+  it("drops an end line that does not follow the cited line", () => {
+    renderNavigationShell();
+    fireEvent.click(screen.getByRole("button", { name: "Cite AGENTS empty range" }));
+    expect(screen.getByTestId("file-viewer-inline")).toHaveAttribute("data-line", "10");
     expect(screen.getByTestId("file-viewer-inline")).not.toHaveAttribute("data-end-line");
     expect(screen.getByTestId("url-params")).not.toHaveTextContent("endLine=");
   });

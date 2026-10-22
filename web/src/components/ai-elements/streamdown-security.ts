@@ -37,11 +37,11 @@ export const FILE_LINK_STREAMDOWN_REHYPE_PLUGINS = createStreamdownRehypePlugins
 // from its (unhardened) href so it matches the real filename on disk.
 export const WORKSPACE_FILE_LINK_ATTR = "data-omnigent-file";
 
-// An href that can only be a protocol URL, a protocol-relative URL, or an
-// in-page anchor, never a path to a file in the session workspace. The
-// lookahead keeps a cited position off the scheme branch: `notes.md:12` (or
-// `:12-18`) is a filename plus a position, but is shaped exactly like a scheme.
-const NON_FILE_HREF = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d+(?::\d+|-\d+)?$)|\/\/|#)/;
+// A protocol, protocol-relative or in-page href, never a workspace file. The
+// lookahead keeps `notes.md:12` / `:12-18` positions off the scheme branch,
+// except for phone-number schemes such as `tel:555-1234`.
+const NON_FILE_HREF =
+  /^(?:(?:tel|sms|fax|callto):|[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d+(?::\d+|-\d+)?$)|\/\/|#)/i;
 // `:line`, `:line:column`, or the `:start-end` range form.
 const COLON_POSITION_SUFFIX = /:(\d+)(?::(\d+)|-(\d+))?$/;
 // `#Lline`, `#LlineCcolumn`, or a `#Lstart-Lend` range (end column ignored).

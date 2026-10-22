@@ -271,6 +271,7 @@ function WorkspaceFileLink({
   const { open: openWorkspaceFile, unopenable, resolvedPath } = useWorkspaceFileOpener(path, true);
   // Scopes the desktop in-app browser route to this conversation's view.
   const conversationId = useFileViewerConversationId();
+  const { root, home } = useWorkspacePaths();
 
   if (!path) {
     if (typeof href === "string" && isRemoteVideoUrl(href)) {
@@ -378,11 +379,11 @@ function WorkspaceFileLink({
     );
   }
 
-  // Link text that spells out the linked file's path shows just its name; a
-  // descriptive label the agent chose is kept as written.
+  // Link text that spells out the linked file and position shows just its name;
+  // a descriptive label, or text citing a different place, is kept as written.
   const linkText = typeof children === "string" ? children : null;
   const shortLabel =
-    linkText && fileName(splitWorkspaceFileCitation(linkText).path) === fileName(resolvedPath)
+    linkText && citesSamePlace(linkText, path, resolvedPath, root, home)
       ? shortFileCitationLabel(linkText)
       : null;
 
@@ -413,8 +414,19 @@ function WorkspaceFileLink({
   );
 }
 
-function fileName(path: string): string {
-  return path.slice(path.lastIndexOf("/") + 1);
+function citesSamePlace(
+  text: string,
+  target: string,
+  resolvedTarget: string,
+  root: string | null,
+  home: string | null,
+): boolean {
+  const cited = splitWorkspaceFileCitation(text);
+  const linked = splitWorkspaceFileCitation(target);
+  return (
+    resolveChatFilePath(cited.path, root, home)?.path === resolvedTarget &&
+    (!cited.hasPosition || (cited.line === linked.line && cited.endLine === linked.endLine))
+  );
 }
 
 // Markdown images open in the shared lightbox on click, matching uploaded and

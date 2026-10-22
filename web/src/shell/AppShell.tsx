@@ -1360,7 +1360,13 @@ function AppShellImpl() {
   const commitFileNavigation = useCallback(
     (path: string, options?: OpenFileOptions) => {
       const position = options?.line
-        ? { line: options.line, column: options.column, endLine: options.endLine }
+        ? {
+            line: options.line,
+            column: options.column,
+            ...(options.endLine && options.endLine > options.line
+              ? { endLine: options.endLine }
+              : {}),
+          }
         : undefined;
       setSelectedFilePath(path);
       setFileNavigation({ conversationId, path, position });

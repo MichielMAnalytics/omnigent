@@ -457,9 +457,20 @@ describe("file link labels", () => {
     expect(openFile).toHaveBeenCalledWith("docs/notes.md", { line: 12 });
   });
 
+  it("shortens a path label without a position on a link to a cited line", () => {
+    renderMarkdown("[docs/notes.md](docs/notes.md#L12)", ["docs/notes.md"]);
+
+    const link = screen.getByRole("button", { name: "docs/notes.md" });
+    expect(link).toHaveTextContent(/^notes\.md$/);
+    fireEvent.click(link);
+    expect(openFile).toHaveBeenCalledWith("docs/notes.md", { line: 12 });
+  });
+
   it.each([
     ["a descriptive label", "[the migration notes](docs/notes.md)", "the migration notes"],
     ["a path to another file", "[docs/other.md](docs/notes.md)", "docs/other.md"],
+    ["a same-named file elsewhere", "[src/a/notes.md](docs/notes.md)", "src/a/notes.md"],
+    ["text citing another line", "[docs/notes.md:10](docs/notes.md#L50)", "docs/notes.md:10"],
   ])("keeps %s as written", (_label, markdown, text) => {
     renderMarkdown(markdown, ["docs/notes.md"]);
 

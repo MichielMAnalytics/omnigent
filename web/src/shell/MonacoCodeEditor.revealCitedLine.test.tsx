@@ -293,6 +293,13 @@ describe("MonacoCodeEditor cited-line reveal", () => {
     expect(fakeEditor!.createDecorationsCollection).toHaveBeenCalledTimes(1);
   });
 
+  it("clears the cited-range highlight when the editor unmounts", async () => {
+    const { unmount } = await renderMounted(makeEditor(120, { endLine: 130 }));
+    const editor = fakeEditor!;
+    unmount();
+    expect(editor.clearDecorations).toHaveBeenCalledTimes(1);
+  });
+
   it("removes the layout listener when the editor unmounts", async () => {
     const { unmount } = await renderMounted(makeEditor(1));
     const editor = fakeEditor!;
