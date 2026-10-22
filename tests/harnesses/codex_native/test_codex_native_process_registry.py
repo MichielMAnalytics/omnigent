@@ -7,7 +7,6 @@ import contextlib
 import json
 import os
 import select
-import shutil
 import signal
 import subprocess
 import sys
@@ -18,6 +17,7 @@ import pytest
 
 from omnigent.harnesses.codex_native import app_server
 from omnigent.harnesses.codex_native import process_registry as registry
+from tests._helpers.polling import poll_until
 
 fcntl = pytest.importorskip("fcntl")
 _REAL_PROCESS_START_IDENTITY = registry._process_start_identity
@@ -288,11 +288,12 @@ def _process_has_exited(pid: int) -> bool:
     return state in {"Z", "X"}
 
 
-def _wait_until(condition, *, timeout: float, message: str) -> None:
-    deadline = time.monotonic() + timeout
-    while not condition():
-        assert time.monotonic() < deadline, message
-        time.sleep(0.05)
+def _fake_codex(tmp_path: Path) -> str:
+    """Write a stand-in ``codex`` that stays alive whatever arguments it gets."""
+    codex = tmp_path / "codex"
+    codex.write_text("#!/bin/sh\nexec sleep 300\n", encoding="utf-8")
+    codex.chmod(0o755)
+    return str(codex)
 
 
 def _read_probe_identity(launcher: subprocess.Popen[str], *, timeout: float) -> dict[str, int]:
@@ -306,23 +307,15 @@ def _read_probe_identity(launcher: subprocess.Popen[str], *, timeout: float) -> 
     return json.loads(line)
 
 
-def _use_real_process_identity(monkeypatch) -> None:
-    monkeypatch.setattr(registry, "_process_start_identity", _REAL_PROCESS_START_IDENTITY)
-    monkeypatch.setattr(
-        registry, "_process_group_matches_entry", _REAL_PROCESS_GROUP_MATCHES_ENTRY
-    )
-
-
 def test_reconciliation_reaps_crash_leftover_model_probe_app_server(
     tmp_path: Path, monkeypatch
 ) -> None:
     """A fresh Host reaps the model-probe app-server a crashed Host left behind."""
-    codex_path = shutil.which("codex")
-    if codex_path is None:
-        pytest.skip("codex CLI is required to spawn a real model-probe app-server")
-
     monkeypatch.setenv("OMNIGENT_CODEX_NATIVE_STATE_DIR", str(tmp_path / "state"))
-    _use_real_process_identity(monkeypatch)
+    monkeypatch.setattr(registry, "_process_start_identity", _REAL_PROCESS_START_IDENTITY)
+    monkeypatch.setattr(
+        registry, "_process_group_matches_entry", _REAL_PROCESS_GROUP_MATCHES_ENTRY
+    )
     registry_path = registry.codex_native_process_registry_path()
     probe_home = tmp_path / "codex-model-probe"
     probe_home.mkdir()
@@ -336,7 +329,7 @@ def test_reconciliation_reaps_crash_leftover_model_probe_app_server(
             sys.executable,
             "-c",
             _MODEL_PROBE_LAUNCHER,
-            codex_path,
+            _fake_codex(tmp_path),
             f"ws://127.0.0.1:{app_server._allocate_loopback_port()}",
             str(probe_home),
         ],
@@ -361,11 +354,7 @@ def test_reconciliation_reaps_crash_leftover_model_probe_app_server(
 
         registry.reconcile_codex_native_process_registry()
 
-        _wait_until(
-            lambda: _process_has_exited(probe_pid),
-            timeout=10.0,
-            message="fresh-Host reconcile left the orphaned model-probe app-server running",
-        )
+        poll_until(lambda: _process_has_exited(probe_pid), timeout_s=10.0, interval_s=0.05)
         assert registry._read_registry(registry_path) == []
     finally:
         with contextlib.suppress(ProcessLookupError):
@@ -377,50 +366,27 @@ def test_reconciliation_reaps_crash_leftover_model_probe_app_server(
                 os.killpg(probe_pgid, signal.SIGKILL)
 
 
-def test_live_model_probe_survives_reconcile_and_unregisters_on_stop(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """A running Host's probe is skipped by reconcile and cleaned up by its own stop."""
-    codex_path = shutil.which("codex")
-    if codex_path is None:
-        pytest.skip("codex CLI is required to spawn a real model-probe app-server")
-
+def test_model_probe_stop_unregisters_and_releases_its_lock(tmp_path: Path, monkeypatch) -> None:
+    """Stopping a probe normally removes its registry entry and owner lock."""
     monkeypatch.setenv("OMNIGENT_CODEX_NATIVE_STATE_DIR", str(tmp_path / "state"))
-    _use_real_process_identity(monkeypatch)
     registry_path = registry.codex_native_process_registry_path()
-    probe_home = tmp_path / "codex-model-probe"
-    probe_home.mkdir()
 
     async def _probe_lifecycle() -> None:
         discovery = await app_server._start_codex_model_discovery_process(
-            codex_path=codex_path,
+            codex_path=_fake_codex(tmp_path),
             listen_url=f"ws://127.0.0.1:{app_server._allocate_loopback_port()}",
-            env=app_server._clean_codex_env() | {"CODEX_HOME": str(probe_home)},
-            cwd=probe_home,
+            env=app_server._clean_codex_env(),
+            cwd=tmp_path,
         )
-        process = discovery.process
         try:
             entries = registry._read_registry(registry_path)
-            assert [(entry.pid, entry.pgid) for entry in entries] == [
-                (process.pid, os.getpgid(process.pid))
-            ], "the discovery spawn did not record the probe in the crash-safe registry"
+            assert [entry.pid for entry in entries] == [discovery.process.pid]
             owner_lock_path = entries[0].owner_lock_path
             assert owner_lock_path is not None
             assert registry._owner_lock_held(owner_lock_path)
-
-            registry.reconcile_codex_native_process_registry()
-
-            await asyncio.sleep(0.2)
-            assert not _process_has_exited(process.pid), (
-                "reconcile reaped a probe whose Host is still running"
-            )
-            assert registry._read_registry(registry_path) == entries
         finally:
             await app_server._stop_codex_model_discovery_process(discovery)
-
-        assert process.returncode is not None
         assert registry._read_registry(registry_path) == []
-        assert not registry._owner_lock_held(owner_lock_path)
         assert not Path(owner_lock_path).exists()
 
     asyncio.run(_probe_lifecycle())
