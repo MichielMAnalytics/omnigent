@@ -35,11 +35,16 @@ interface FakeEditor {
   getContribution: () => null;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
   revealRangeInCenter: ReturnType<typeof vi.fn>;
+  revealLineNearTop: ReturnType<typeof vi.fn>;
+  getTopForLineNumber: (lineNumber: number) => number;
+  getBottomForLineNumber: (lineNumber: number) => number;
   setPosition: ReturnType<typeof vi.fn>;
   createDecorationsCollection: ReturnType<typeof vi.fn>;
   clearDecorations: ReturnType<typeof vi.fn>;
   scrollTops: number[];
 }
+
+const LINE_HEIGHT = 20;
 
 function makeFakeEditor(initial: string, lineCount: number): FakeEditor {
   const dom = document.createElement("div");
@@ -81,6 +86,9 @@ function makeFakeEditor(initial: string, lineCount: number): FakeEditor {
     getContribution: () => null,
     revealPositionInCenter: vi.fn(),
     revealRangeInCenter: vi.fn(),
+    revealLineNearTop: vi.fn(),
+    getTopForLineNumber: (lineNumber) => (lineNumber - 1) * LINE_HEIGHT,
+    getBottomForLineNumber: (lineNumber) => lineNumber * LINE_HEIGHT,
     setPosition: vi.fn(),
     createDecorationsCollection: vi.fn(() => ({ clear: editor.clearDecorations })),
     clearDecorations: vi.fn(),
@@ -291,6 +299,22 @@ describe("MonacoCodeEditor cited-line reveal", () => {
     await act(async () => {});
     expect(fakeEditor!.clearDecorations).toHaveBeenCalledTimes(1);
     expect(fakeEditor!.createDecorationsCollection).toHaveBeenCalledTimes(1);
+  });
+
+  it("clamps a cited range that runs past the end of the file", async () => {
+    await renderMounted(makeEditor(390, { endLine: 999 }));
+    expect(fakeEditor!.revealRangeInCenter).toHaveBeenCalledWith(
+      { startLineNumber: 390, startColumn: 1, endLineNumber: 400, endColumn: 1 },
+      1,
+    );
+  });
+
+  it("shows the first line of a cited range taller than the viewport", async () => {
+    // The 800px-high fake viewport fits 40 lines of 20px.
+    await renderMounted(makeEditor(120, { endLine: 160 }));
+    expect(fakeEditor!.revealLineNearTop).toHaveBeenCalledWith(120, 1);
+    expect(fakeEditor!.revealRangeInCenter).not.toHaveBeenCalled();
+    expect(fakeEditor!.setPosition).toHaveBeenLastCalledWith({ lineNumber: 120, column: 1 });
   });
 
   it("clears the cited-range highlight when the editor unmounts", async () => {

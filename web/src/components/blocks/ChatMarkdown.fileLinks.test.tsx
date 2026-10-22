@@ -471,6 +471,11 @@ describe("file link labels", () => {
     ["a path to another file", "[docs/other.md](docs/notes.md)", "docs/other.md"],
     ["a same-named file elsewhere", "[src/a/notes.md](docs/notes.md)", "src/a/notes.md"],
     ["text citing another line", "[docs/notes.md:10](docs/notes.md#L50)", "docs/notes.md:10"],
+    [
+      "text citing another column",
+      "[docs/notes.md:12:5](docs/notes.md#L12C9)",
+      "docs/notes.md:12:5",
+    ],
   ])("keeps %s as written", (_label, markdown, text) => {
     renderMarkdown(markdown, ["docs/notes.md"]);
 

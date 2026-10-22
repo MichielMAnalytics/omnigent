@@ -35,10 +35,17 @@ export function useMonacoFilePosition({
       // Moving the cursor expands collapsed diff context containing the target.
       editor.setPosition(target);
       if (position.endLine) {
-        editor.revealRangeInCenter(
-          citedRange(position.line, position.endLine),
-          1 /* ScrollType.Immediate */,
-        );
+        const endLine = model.validatePosition({ lineNumber: position.endLine, column: 1 });
+        const rangeHeight =
+          editor.getBottomForLineNumber(endLine.lineNumber) -
+          editor.getTopForLineNumber(target.lineNumber);
+        // A range taller than the viewport shows its first line, as the Shiki viewer does.
+        if (rangeHeight <= height)
+          editor.revealRangeInCenter(
+            citedRange(target.lineNumber, endLine.lineNumber),
+            1 /* ScrollType.Immediate */,
+          );
+        else editor.revealLineNearTop(target.lineNumber, 1 /* ScrollType.Immediate */);
       } else {
         editor.revealPositionInCenter(target, 1 /* ScrollType.Immediate */);
       }

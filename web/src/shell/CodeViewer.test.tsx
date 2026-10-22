@@ -1178,27 +1178,31 @@ describe("source line navigation", () => {
     }
   });
 
-  it("highlights every line of a cited range and centers its first line", () => {
-    const scroll = vi.fn();
-    const original = HTMLElement.prototype.scrollIntoView;
-    HTMLElement.prototype.scrollIntoView = scroll;
-    try {
-      renderViewer("one\ntwo\nthree\nfour\nfive", true, "notes.md", {
-        position: { line: 2, endLine: 4 },
-      });
-      const row = (text: string) =>
-        screen.getByText(text).closest("[data-line]")?.parentElement?.parentElement;
-      expect(scroll.mock.instances.at(-1)).toBe(row("two"));
-      for (const text of ["two", "three", "four"]) {
-        expect(row(text)).toHaveClass("bg-yellow-200/40");
+  it.each([
+    ["inside the file", 2, 4, ["two", "three", "four"]],
+    ["past the end of the file", 4, 99, ["four", "five"]],
+  ])(
+    "highlights every line of a cited range %s and centers its first line",
+    (_label, line, endLine, cited) => {
+      const scroll = vi.fn();
+      const original = HTMLElement.prototype.scrollIntoView;
+      HTMLElement.prototype.scrollIntoView = scroll;
+      try {
+        renderViewer("one\ntwo\nthree\nfour\nfive", true, "notes.md", {
+          position: { line, endLine },
+        });
+        const row = (text: string) =>
+          screen.getByText(text).closest("[data-line]")?.parentElement?.parentElement;
+        expect(scroll.mock.instances.at(-1)).toBe(row(cited[0]));
+        for (const text of ["one", "two", "three", "four", "five"]) {
+          if (cited.includes(text)) expect(row(text)).toHaveClass("bg-yellow-200/40");
+          else expect(row(text)).not.toHaveClass("bg-yellow-200/40");
+        }
+      } finally {
+        HTMLElement.prototype.scrollIntoView = original;
       }
-      for (const text of ["one", "five"]) {
-        expect(row(text)).not.toHaveClass("bg-yellow-200/40");
-      }
-    } finally {
-      HTMLElement.prototype.scrollIntoView = original;
-    }
-  });
+    },
+  );
 });
 
 it.each([true, false])(

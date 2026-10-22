@@ -425,7 +425,10 @@ function citesSamePlace(
   const linked = splitWorkspaceFileCitation(target);
   return (
     resolveChatFilePath(cited.path, root, home)?.path === resolvedTarget &&
-    (!cited.hasPosition || (cited.line === linked.line && cited.endLine === linked.endLine))
+    (!cited.hasPosition ||
+      (cited.line === linked.line &&
+        cited.column === linked.column &&
+        cited.endLine === linked.endLine))
   );
 }
 
