@@ -2603,11 +2603,13 @@ def test_prune_orphaned_bridge_dirs_removes_bridge_with_non_directory_store(
     assert not dead_dir.exists()
 
 
+@pytest.mark.parametrize("recent_suffix", [".db", ".db-wal", ".db-shm"])
 def test_prune_orphaned_bridge_dirs_uses_latest_conversation_activity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    recent_suffix: str,
 ) -> None:
-    """A recent WAL sidecar keeps a bridge whose marker and main database are old."""
+    """A recent database or SQLite sidecar keeps a bridge whose marker and other files are old."""
     dead_dir = _dead_owner_bridge(
         tmp_path / "antigravity-native",
         monkeypatch,
@@ -2616,16 +2618,18 @@ def test_prune_orphaned_bridge_dirs_uses_latest_conversation_activity(
     conversations = _conversations_dir(dead_dir)
     conversations.mkdir(parents=True)
     expired_at = _RETENTION_NOW - _mod._ORPHAN_RETENTION_SECONDS - 1
-    database = conversations / "7d5e1c2a.db"
-    database.write_bytes(b"history")
-    os.utime(database, (expired_at, expired_at))
-    wal = conversations / "7d5e1c2a.db-wal"
-    wal.write_bytes(b"latest turn")
-    os.utime(wal, (_RETENTION_NOW - 60, _RETENTION_NOW - 60))
+    conversation_files = []
+    for suffix in (".db", ".db-wal", ".db-shm"):
+        conversation_file = conversations / f"7d5e1c2a{suffix}"
+        conversation_file.write_bytes(b"history")
+        modified_at = _RETENTION_NOW - 60 if suffix == recent_suffix else expired_at
+        os.utime(conversation_file, (modified_at, modified_at))
+        conversation_files.append(conversation_file)
 
     assert _mod.prune_orphaned_bridge_dirs() == 0
-    assert database.read_bytes() == b"history"
-    assert wal.read_bytes() == b"latest turn"
+    assert all(
+        conversation_file.read_bytes() == b"history" for conversation_file in conversation_files
+    )
 
 
 def _fail_conversation_listing(monkeypatch: pytest.MonkeyPatch, conversations: Path) -> None:
