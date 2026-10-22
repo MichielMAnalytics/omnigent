@@ -253,6 +253,8 @@ describe("ToolCard shell terminal panel", () => {
     const trigger = container.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]')!;
     expect(trigger).toHaveAttribute("title", "pnpm install");
     expect(trigger.textContent).toContain("$ pnpm install");
+    // The prompt is decorative, so the row's accessible name is the bare command.
+    expect(screen.getByRole("button", { name: /^pnpm install/ })).toBe(trigger);
 
     expand(container);
     const terminal = screen.getByTestId("shell-tool-terminal");

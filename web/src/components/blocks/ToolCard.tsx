@@ -376,9 +376,12 @@ function ShellCommandLine({ command }: { command: string }) {
   const { env, rest } = splitEnvPrefix(command);
   return (
     <span className="font-mono text-[0.92em]">
-      <span className="font-semibold text-foreground">$</span>{" "}
+      {/* Decorative prompt: keep it out of the row's accessible name. */}
+      <span aria-hidden="true" className="font-semibold text-foreground">
+        ${" "}
+      </span>
       {env.length > 0 && <span className="opacity-60">{env}</span>}
-      {rest}
+      <span>{rest}</span>
     </span>
   );
 }
