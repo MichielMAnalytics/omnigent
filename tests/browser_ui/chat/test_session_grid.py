@@ -181,11 +181,10 @@ def test_session_grid_drag_persist_live_updates_and_close(
         page.get_by_role("button", name="Filter sessions", exact=True).click()
         page.get_by_role("menuitemradio", name="All sessions", exact=True).click()
         page.get_by_role("button", name="Expand right panel", exact=True).click()
-        expect(page.get_by_role("complementary", name="Workspace", exact=True)).to_be_visible()
-        assert page.locator('[data-grid-session="grid-0"]').evaluate(
-            """pane => pane.getBoundingClientRect().right ===
-                document.querySelector('main[data-session-id="grid-0"]').getBoundingClientRect().right"""
-        )
+        workspace = page.get_by_role("complementary", name="Workspace", exact=True)
+        expect(workspace).to_be_visible()
+        pane_box = page.locator('[data-grid-session="grid-0"]').bounding_box()
+        assert pane_box["x"] + pane_box["width"] <= workspace.bounding_box()["x"]
         _drag_session(page, "grid-1", "grid-0", "right")
         expect(page).to_have_url(re.compile(r"/grid/[^/]+$"))
         expect(page.get_by_test_id("new-chat-button")).not_to_have_class(
@@ -224,7 +223,6 @@ def test_session_grid_drag_persist_live_updates_and_close(
         page.get_by_role("heading", name="Research grid · 2 sessions", exact=True).click()
         expect(grid_nav.get_by_role("link", name="Research monitor")).to_be_visible()
         # One grid-wide workspace follows clicks in any cell, keeping its width and tabs.
-        workspace = page.get_by_role("complementary", name="Workspace", exact=True)
         for index in range(2):
             cell = page.locator(f'[data-grid-session="grid-{index}"]')
             cell.get_by_text(f"Transcript {index}", exact=True).click()
