@@ -5405,7 +5405,7 @@ describe("file navigation request precedence", () => {
     expect(screen.getByTestId("url-params")).not.toHaveTextContent("endLine=");
   });
 
-  it("opens an initial URL range citation and ignores an end before its start", () => {
+  it("opens an initial URL range citation and ignores an end before its start or without a start line", () => {
     const { unmount } = renderNavigationShell(
       reactRouterRouting,
       "?file=README.md&line=100&endLine=104",
@@ -5413,8 +5413,17 @@ describe("file navigation request precedence", () => {
     expect(screen.getByTestId("file-viewer-inline")).toHaveAttribute("data-end-line", "104");
     unmount();
 
-    renderNavigationShell(reactRouterRouting, "?file=README.md&line=100&endLine=90");
+    const { unmount: unmountBackwards } = renderNavigationShell(
+      reactRouterRouting,
+      "?file=README.md&line=100&endLine=90",
+    );
     expect(screen.getByTestId("file-viewer-inline")).toHaveAttribute("data-line", "100");
+    expect(screen.getByTestId("file-viewer-inline")).not.toHaveAttribute("data-end-line");
+    unmountBackwards();
+
+    renderNavigationShell(reactRouterRouting, "?file=README.md&endLine=104");
+    expect(screen.getByTestId("file-viewer-inline")).toHaveAttribute("data-path", "README.md");
+    expect(screen.getByTestId("file-viewer-inline")).not.toHaveAttribute("data-line");
     expect(screen.getByTestId("file-viewer-inline")).not.toHaveAttribute("data-end-line");
   });
 

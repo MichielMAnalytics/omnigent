@@ -92,6 +92,7 @@ import {
   useDeleteTerminal,
 } from "@/hooks/useTerminals";
 import { useWorkspaceResources } from "./useWorkspaceResources";
+import { citedFilePosition } from "./filePositionState";
 import { cn } from "@/lib/utils";
 import {
   isNativeWrapper as isNativeWrapperLabel,
@@ -1359,15 +1360,7 @@ function AppShellImpl() {
 
   const commitFileNavigation = useCallback(
     (path: string, options?: OpenFileOptions) => {
-      const position = options?.line
-        ? {
-            line: options.line,
-            column: options.column,
-            ...(options.endLine && options.endLine > options.line
-              ? { endLine: options.endLine }
-              : {}),
-          }
-        : undefined;
+      const position = citedFilePosition(options);
       setSelectedFilePath(path);
       setFileNavigation({ conversationId, path, position });
       // A file and a shell tab can't both own the rail's content slot —

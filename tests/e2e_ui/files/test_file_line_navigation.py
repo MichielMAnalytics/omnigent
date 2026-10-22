@@ -92,6 +92,7 @@ def test_chat_range_citation_shows_file_name_and_highlights_range(
     with _cited_workspace_file(
         base_url, session_id, _RANGE_FILE_PATH, "\n".join(_RANGE_LINES), f"See `{citation_text}`."
     ):
+        # Created after setup so a recorded run (OMNIGENT_E2E_RECORD_DIR) starts at the journey.
         page: Page = request.getfixturevalue("page")
         page.set_viewport_size({"width": 1600, "height": 1000})
         page.goto(f"{base_url}/c/{session_id}")

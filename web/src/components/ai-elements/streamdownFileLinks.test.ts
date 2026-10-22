@@ -83,6 +83,7 @@ describe("markWorkspaceFileLinks", () => {
     expectHandedOver(markHref("docs/notes.md:12"), "docs/notes.md:12");
     expectHandedOver(markHref("notes.md:12:7"), "notes.md:12:7");
     expectHandedOver(markHref("notes.md:12-18"), "notes.md:12-18");
+    expectHandedOver(markHref("Makefile:12"), "Makefile:12");
   });
 
   it.each([
@@ -155,6 +156,8 @@ describe("markWorkspaceFileLinks", () => {
     ["mailto:someone@example.com", "mailto"],
     ["tel:555-1234", "phone number shaped like a line range"],
     ["SMS:555-0100", "uppercase phone scheme"],
+    ["skype:555-1234", "scheme without an extension before a range"],
+    ["geo:1-2", "short scheme shaped like a line range"],
     ["#section-two", "in-page anchor"],
     ["javascript:alert(1)", "script scheme"],
     ["docs/page.md?raw=1", "path carrying a query"],
