@@ -514,6 +514,11 @@
   );
 }
 
+/* Only the active grid pane keeps the glow. */
+[data-grid-session][data-active="false"] .side-chat-backdrop {
+  background: none;
+}
+
 /* Fixed default icon geometry: a 14px glyph centered in a 16px SVG box. */
 .ui-icon {
   box-sizing: border-box;

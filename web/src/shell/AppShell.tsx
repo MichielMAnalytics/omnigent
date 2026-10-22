@@ -1,5 +1,5 @@
 import { useLoadedConversations } from "@/hooks/useSidebarData";
-import { GridSessionsProvider } from "@/grid/GridSessionsContext";
+import { GridSessionsProvider, useGridSessions } from "@/grid/GridSessionsContext";
 import { GridWorkspace } from "@/grid/GridWorkspace";
 import {
   type CSSProperties,
@@ -222,6 +222,7 @@ export function AppShell() {
 }
 
 function AppShellImpl() {
+  const grids = useGridSessions();
   // Cmd/Ctrl+Enter accepts the pending harness approval prompt. Bound once
   // here so it works on every chat route, regardless of where focus sits.
   useApproveHotkey();
@@ -2548,6 +2549,7 @@ function AppShellImpl() {
                   className="relative flex min-h-0 min-w-0 flex-1 flex-col"
                   data-shell-header={extensionOwnsHeader ? "hidden" : "visible"}
                   data-session-id={conversationId}
+                  data-grid-session={grids?.enabled ? grids.conversationId : undefined}
                 >
                   <Outlet />
                 </main>
