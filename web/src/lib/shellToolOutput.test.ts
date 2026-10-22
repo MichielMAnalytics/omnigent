@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseShellToolOutput } from "./shellToolOutput";
+import { parseShellToolOutput, stripAnsi } from "./shellToolOutput";
 
 describe("parseShellToolOutput", () => {
   it("reads sys_os_shell's structured stdout, stderr and exit_code", () => {
@@ -24,7 +24,20 @@ describe("parseShellToolOutput", () => {
     expect(parseShellToolOutput('{"rows": 3}')).toEqual({ text: '{"rows": 3}', exitCode: null });
   });
 
-  it("removes ANSI color sequences", () => {
-    expect(parseShellToolOutput("\u001b[32mok\u001b[0m done").text).toBe("ok done");
+  it("keeps ANSI colors for rendering, and stripAnsi removes them for copying", () => {
+    const colored = "\u001b[32mok\u001b[0m done";
+    expect(parseShellToolOutput(colored).text).toBe(colored);
+    expect(stripAnsi(colored)).toBe("ok done");
+    expect(stripAnsi("\u001b]0;title\u0007plain")).toBe("plain");
+  });
+
+  it("spells out git's short reset so colors do not bleed", () => {
+    expect(parseShellToolOutput("\u001b[31m-\u001b[m next").text).toBe("\u001b[31m-\u001b[0m next");
+  });
+
+  it("drops cursor and title escapes the transcript cannot replay", () => {
+    expect(
+      parseShellToolOutput("a\u001b[2K\u001b[1Gb \u001b]0;t\u0007\u001b[1mc\u001b[0m").text,
+    ).toBe("ab \u001b[1mc\u001b[0m");
   });
 });

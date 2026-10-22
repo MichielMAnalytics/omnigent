@@ -6,7 +6,7 @@
 // - Other harnesses (Claude `Bash`, Pi/OpenCode `bash`) return plain text.
 
 export interface ShellToolOutput {
-  /** What the command printed: stdout followed by stderr. */
+  /** What the command printed (stdout then stderr); ANSI colors kept, other escapes dropped. */
   text: string;
   /** Exit code when the output reports one, otherwise `null`. */
   exitCode: number | null;
@@ -19,12 +19,16 @@ const ANSI_ESCAPE_RE =
   // eslint-disable-next-line no-control-regex -- intentionally stripping terminal escapes
   /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
 
+// Select Graphic Rendition: the color / bold / underline escapes.
+// eslint-disable-next-line no-control-regex -- matching terminal escapes
+const SGR_RE = /^\u001b\[[0-9;]*m$/;
+
 /** Parse a shell tool's raw output string. */
 export function parseShellToolOutput(output: string): ShellToolOutput {
   const structured = parseStructuredOutput(output);
   if (structured !== null) return structured;
 
-  const text = stripAnsi(output);
+  const text = keepColorEscapesOnly(output);
   const match = EXIT_CODE_SUFFIX_RE.exec(text);
   if (match === null) return { text, exitCode: null };
   return { text: text.slice(0, match.index), exitCode: Number(match[1]) };
@@ -45,13 +49,24 @@ function parseStructuredOutput(output: string): ShellToolOutput | null {
   if (typeof stdout !== "string" && typeof stderr !== "string") return null;
   const parts = [stdout, stderr]
     .filter((part): part is string => typeof part === "string" && part.length > 0)
-    .map((part) => stripAnsi(part).replace(/\n$/, ""));
+    .map((part) => keepColorEscapesOnly(part).replace(/\n$/, ""));
   return {
     text: parts.join("\n"),
     exitCode: typeof exitCode === "number" && Number.isInteger(exitCode) ? exitCode : null,
   };
 }
 
-function stripAnsi(text: string): string {
+// Cursor moves, line clears and title updates mean nothing in a static
+// transcript, and the renderer would show them as raw characters. The short
+// reset `ESC[m` (used by git) is spelled out because the renderer ignores it.
+function keepColorEscapesOnly(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, (sequence) => {
+    if (!SGR_RE.test(sequence)) return "";
+    return sequence === "\u001b[m" ? "\u001b[0m" : sequence;
+  });
+}
+
+/** Remove ANSI escape sequences, e.g. for copying output as plain text. */
+export function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
 }

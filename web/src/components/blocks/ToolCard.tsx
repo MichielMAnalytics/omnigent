@@ -31,7 +31,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { RenderItem, ToolState } from "@/lib/renderItems";
-import { parseShellToolOutput } from "@/lib/shellToolOutput";
+import { parseShellToolOutput, stripAnsi } from "@/lib/shellToolOutput";
 import { iconForTool } from "@/lib/toolIcon";
 import {
   type ToolRunCall,
@@ -409,7 +409,7 @@ function ShellTerminalPanel({
   const parsed = useMemo(() => (output === null ? null : parseShellToolOutput(output)), [output]);
   return (
     <div className="space-y-2">
-      <CodeBlockContainer language="shellsession" data-testid="shell-tool-terminal">
+      <CodeBlockContainer language="bash" data-testid="shell-tool-terminal">
         {cwd !== null && (
           <div
             className="truncate border-b bg-muted/80 px-3 py-1.5 font-mono text-muted-foreground text-xs"
@@ -418,13 +418,16 @@ function ShellTerminalPanel({
             {cwd}
           </div>
         )}
-        <CodeBlockContent code={`$ ${command}`} language="shellsession" wrap={wrap} />
+        {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
+        <div className="[&_code>span:first-child]:before:font-semibold [&_code>span:first-child]:before:text-muted-foreground [&_code>span:first-child]:before:content-['$_']">
+          <CodeBlockContent code={command} language="bash" wrap={wrap} />
+        </div>
         {parsed !== null && (
           <div className="border-t">
             {parsed.text.length > 0 ? (
               <OutputSection
                 output={parsed.text}
-                renderPanel={(text) => <CodeBlockContent code={text} language="log" wrap={wrap} />}
+                renderPanel={(text) => <CodeBlockContent code={text} language="ansi" wrap={wrap} />}
               />
             ) : (
               <div className="px-4 py-2 font-mono text-muted-foreground text-ui">(no output)</div>
@@ -448,7 +451,7 @@ function ShellTerminalPanel({
             <WrapTextButton onToggle={() => setWrap((value) => !value)} wrap={wrap} />
             <CopyTextButton label="Copy command" text={command} />
             {parsed !== null && parsed.text.length > 0 && (
-              <CopyTextButton label="Copy output" text={parsed.text} />
+              <CopyTextButton label="Copy output" text={stripAnsi(parsed.text)} />
             )}
           </CodeBlockActions>
         </div>

@@ -162,3 +162,20 @@ export const ShellRunning: Story = {
   },
   play: async ({ canvasElement }) => expand(canvasElement),
 };
+
+export const ShellAnsiColors: Story = {
+  args: {
+    name: "Bash",
+    arguments: { command: "git diff --stat --color=always origin/main" },
+    output: [
+      " web/package.json    | 2 \u001b[32m+\u001b[m\u001b[31m-\u001b[m",
+      " pnpm-workspace.yaml | 3 \u001b[32m++\u001b[m\u001b[31m-\u001b[m",
+      " 2 files changed, 3 insertions(+), 2 deletions(-)",
+      "\u001b[1;33mwarning:\u001b[0m CRLF will be replaced by LF in web/package.json",
+    ].join("\n"),
+    state: "output-available",
+    startedAt: null,
+    duration: 0.04,
+  },
+  play: async ({ canvasElement }) => expand(canvasElement),
+};

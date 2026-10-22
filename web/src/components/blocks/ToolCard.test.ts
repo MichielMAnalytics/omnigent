@@ -257,7 +257,9 @@ describe("ToolCard shell terminal panel", () => {
     expand(container);
     const terminal = screen.getByTestId("shell-tool-terminal");
     expect(terminal.textContent).toContain("/repo/app");
-    expect(terminal.textContent).toContain("$ pnpm install");
+    // The `$` prompt is CSS-only, so the text is the bare command.
+    expect(terminal.textContent).toContain("pnpm install");
+    expect(terminal.textContent).not.toContain("zsh -lc");
     expect(terminal.textContent).toContain("Done in 1.2s");
     expect(screen.queryByText("Parameters")).toBeNull();
   });
