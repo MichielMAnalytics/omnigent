@@ -11,7 +11,7 @@ import {
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import type { ComponentProps, CSSProperties, HTMLAttributes } from "react";
+import type { ComponentProps, CSSProperties, HTMLAttributes, ReactNode } from "react";
 import {
   createContext,
   memo,
@@ -373,6 +373,7 @@ export const CodeBlockContent = ({
   showLineNumbers = false,
   wrap = false,
   className,
+  leading,
 }: {
   code: string;
   language: CodeLanguage;
@@ -381,6 +382,8 @@ export const CodeBlockContent = ({
   wrap?: boolean;
   /** Extra classes for the `<pre>`, e.g. to override its padding or background. */
   className?: string;
+  /** Rendered before the code in the same box, e.g. a floated toolbar the first line wraps around. */
+  leading?: ReactNode;
 }) => {
   // Memoized raw tokens for immediate display
   const rawTokens = useMemo(() => createRawTokens(code), [code]);
@@ -422,6 +425,7 @@ export const CodeBlockContent = ({
       className="relative overflow-auto"
       data-code-highlighted={tokenized === rawTokens ? "false" : "true"}
     >
+      {leading}
       <CodeBlockBody
         className={cn(wrap && "whitespace-pre-wrap wrap-anywhere", className)}
         showLineNumbers={showLineNumbers}

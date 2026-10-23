@@ -16,7 +16,7 @@ import {
   WrapTextIcon,
   XCircleIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CodeBlock,
@@ -408,6 +408,9 @@ function ShellTerminalPanel({
   const [showRaw, setShowRaw] = useState(false);
   const parsed = useMemo(() => (output === null ? null : parseShellToolOutput(output)), [output]);
   const hasOutput = parsed !== null && parsed.text.length > 0;
+  // With no cwd line, float the actions so only the command's first line wraps
+  // around them; unwrapped lines cannot flow around a float, so they get a row.
+  const floatActions = cwd === null && wrap;
   const actions = (
     <CodeBlockActions className="my-0 mr-0 shrink-0 gap-1">
       <WrapTextButton onToggle={() => setWrap((value) => !value)} wrap={wrap} />
@@ -431,26 +434,33 @@ function ShellTerminalPanel({
   return (
     <div className="space-y-2">
       <CodeBlockContainer language="bash" data-testid="shell-tool-terminal">
-        {cwd !== null && (
+        {(cwd !== null || !floatActions) && (
           <div className="flex items-center justify-between gap-2 px-3 pt-1.5">
-            <span className="min-w-0 truncate font-mono text-muted-foreground text-xs" title={cwd}>
+            <span
+              className="min-w-0 truncate font-mono text-muted-foreground text-xs"
+              title={cwd ?? undefined}
+            >
               {cwd}
             </span>
             {actions}
           </div>
         )}
-        {/* Without a cwd line the actions share the command's line instead of adding an empty one. */}
-        <div className={cn("flex items-start gap-2", cwd === null && "pt-1.5 pr-3")}>
-          {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
-          <div className="min-w-0 flex-1 [&_code>span:first-child]:before:font-semibold [&_code>span:first-child]:before:text-muted-foreground [&_code>span:first-child]:before:content-['$_']">
-            <CodeBlockContent
-              code={command}
-              language="bash"
-              wrap={wrap}
-              className={cn(TERMINAL_PRE_CLASS, "pt-1 pb-1")}
-            />
-          </div>
-          {cwd === null && actions}
+        {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
+        <div
+          className="[&_code>span:first-child]:before:font-semibold [&_code>span:first-child]:before:text-muted-foreground [&_code>span:first-child]:before:content-[var(--shell-prompt)]"
+          style={SHELL_PROMPT_STYLE}
+        >
+          <CodeBlockContent
+            code={command}
+            language="bash"
+            wrap={wrap}
+            className={cn(TERMINAL_PRE_CLASS, floatActions ? "pt-2 pb-1" : "pt-1 pb-1")}
+            leading={
+              floatActions ? (
+                <div className="float-right mt-1.5 mr-3 -mb-1 ml-2">{actions}</div>
+              ) : undefined
+            }
+          />
         </div>
         {hasOutput && (
           <OutputSection
@@ -481,6 +491,9 @@ function ShellTerminalPanel({
     </div>
   );
 }
+
+// A non-breaking space keeps the prompt on the same line as the first word.
+const SHELL_PROMPT_STYLE = { "--shell-prompt": '"$\u00a0"' } as CSSProperties;
 
 // Command and output share the panel's own background so the block reads as
 // one continuous terminal surface instead of stacked code panels.

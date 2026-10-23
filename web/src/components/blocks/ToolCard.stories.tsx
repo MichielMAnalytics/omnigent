@@ -31,6 +31,14 @@ const meta = {
   title: "Components/Blocks/ToolCard",
   component: ToolCard,
   tags: ["visual-snapshot"],
+  // Cards span the chat column in the app; the centered canvas would shrink them to their content.
+  decorators: [
+    (Story) => (
+      <div className="w-[42rem] max-w-full">
+        <Story />
+      </div>
+    ),
+  ],
 } satisfies Meta<typeof ToolCard>;
 
 export default meta;
@@ -163,6 +171,19 @@ export const ShellRunning: Story = {
     state: "input-available",
     startedAt: null,
     duration: 12,
+  },
+  play: async ({ canvasElement }) => expand(canvasElement),
+};
+
+// Claude's Bash carries no cwd, so the actions share the command's line.
+export const ShellLongCommandWithoutCwd: Story = {
+  args: {
+    name: "shell",
+    arguments: { command: longCommand },
+    output: "Lockfile is up to date, resolution step is skipped",
+    state: "output-available",
+    startedAt: null,
+    duration: 13.6,
   },
   play: async ({ canvasElement }) => expand(canvasElement),
 };
