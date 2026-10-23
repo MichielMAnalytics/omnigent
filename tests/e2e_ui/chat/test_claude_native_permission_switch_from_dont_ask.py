@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import Iterator
 
@@ -206,8 +207,9 @@ def test_shift_tab_cycles_permission_mode_from_composer(
     composer = page.get_by_placeholder(_COMPOSER_PLACEHOLDER)
     composer.click()
     composer.press_sequentially("draft survives the mode switch")
-    # Hold the starting mode briefly so a recording shows it before the first press.
-    page.wait_for_timeout(1_500)
+    if os.environ.get("OMNIGENT_E2E_RECORD_DIR"):
+        # Show the starting mode in the recording before the first press.
+        page.wait_for_timeout(1_500)
 
     for mode, label, footer in _HOTKEY_STEPS:
         with page.expect_response(

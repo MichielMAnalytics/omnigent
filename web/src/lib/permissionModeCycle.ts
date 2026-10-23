@@ -1,9 +1,6 @@
-// Shift+Tab in a chat composer steps the permission chip to its next mode, the
-// way Claude Code's and Cursor's own Shift+Tab does. The shortcut follows the
-// chip's menu order but never lands on a mode that removes approvals entirely:
-// those stay a deliberate menu pick.
+// Shift+Tab steps the permission chip in menu order; full-access modes stay menu-only.
 
-import { permissionModeConcept } from "@/lib/nativeHarnessModes";
+import { knownPermissionModeConcept } from "@/lib/nativeHarnessModes";
 
 /** The key fields the cycle check reads from a React or DOM keyboard event. */
 export interface PermissionModeCycleKeyEvent {
@@ -30,12 +27,13 @@ export function isPermissionModeCycleKey(event: PermissionModeCycleKeyEvent): bo
   );
 }
 
-/** Whether Shift+Tab may select *mode*; full-access modes are menu-only. */
+/** Whether Shift+Tab may select *mode*: unmapped and full-access modes are menu-only. */
 export function isCyclablePermissionMode(
   harness: string | null | undefined,
   mode: string,
 ): boolean {
-  return permissionModeConcept(harness, mode) !== "full-access";
+  const concept = knownPermissionModeConcept(harness, mode);
+  return concept !== undefined && concept !== "full-access";
 }
 
 /**

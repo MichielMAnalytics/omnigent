@@ -11047,13 +11047,14 @@ describe("landing permission-mode shortcut", () => {
     expect(body.terminal_launch_args).toEqual(["--permission-mode", "plan"]);
   });
 
-  it("leaves Shift+Tab to focus traversal when no host can run the session", () => {
+  it("leaves Shift+Tab to focus traversal when no host can run the session", async () => {
     mockHosts([]);
     renderLanding();
-    const chip = screen.queryByTestId("new-chat-landing-permission-chip");
-    const before = chip?.textContent;
+    const chip = await screen.findByTestId("new-chat-landing-permission-chip");
+    await waitFor(() => expect(chip).toBeDisabled());
+    const before = chip.textContent;
     expect(pressShiftTab()).toBe(true);
-    expect(screen.queryByTestId("new-chat-landing-permission-chip")?.textContent).toBe(before);
+    expect(chip.textContent).toBe(before);
   });
 });
 

@@ -2224,6 +2224,20 @@ export function subAgentComposerLabel(
 }
 
 /**
+ * The in-session permission chip's options, with the harness vocabulary that
+ * classifies them (a session's own harness string can be an alias).
+ */
+function composerPermissionVocabulary(
+  claudeControl: boolean,
+  devinControl: boolean,
+): { harness: string; options: readonly { value: string; label: string }[] } {
+  if (!claudeControl)
+    return { harness: "codex-native", options: CODEX_NATIVE_RUNTIME_APPROVAL_PRESETS };
+  if (devinControl) return { harness: "devin-native", options: DEVIN_NATIVE_PERMISSION_MODES };
+  return { harness: "claude-native", options: CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES };
+}
+
+/**
  * Sub-agent shelf tucked behind the workspace bar's rounded top.
  * Bottom padding keeps the label above the overlap; opaque surfaces prevent
  * the pink tint from bleeding through the bar.
@@ -2562,11 +2576,11 @@ function ComposerImpl(
   // Devin shares this control but not Claude's vocabulary: its rungs are
   // normal / accept-edits / smart / dangerous, cycled in the TUI.
   const devinPermissionControl = modelPickerKind === "devin";
-  const permissionOptions = showClaudePermissionMode
-    ? devinPermissionControl
-      ? DEVIN_NATIVE_PERMISSION_MODES
-      : CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES
-    : CODEX_NATIVE_RUNTIME_APPROVAL_PRESETS;
+  const permissionVocabulary = composerPermissionVocabulary(
+    showClaudePermissionMode,
+    devinPermissionControl,
+  );
+  const permissionOptions = permissionVocabulary.options;
   const permissionLabel = showClaudePermissionMode
     ? devinPermissionControl
       ? (DEVIN_NATIVE_PERMISSION_MODES.find((m) => m.value === claudePermissionMode)?.label ??
@@ -2576,63 +2590,66 @@ function ComposerImpl(
   const selectedPermissionMode = showClaudePermissionMode
     ? claudePermissionMode
     : codexApprovalMode;
-  // Classifies modes for the Shift+Tab cycle; the session's own harness string
-  // can be an alias, so name the vocabulary the options come from.
-  const permissionVocabularyHarness = showClaudePermissionMode
-    ? devinPermissionControl
-      ? "devin-native"
-      : "claude-native"
-    : "codex-native";
   const permissionControlInteractive =
     (showClaudePermissionMode || showCodexApprovalMode) &&
     !isReadOnly &&
     !unreachable &&
     isOwnerLevel(permissionLevel);
-  /** Applies *mode*; resolves to whether the server accepted it. */
-  const changePermission = async (mode: string): Promise<boolean> => {
-    if (isReadOnly || unreachable || configBusyRef.current) return false;
-    configBusyRef.current = true;
-    setConfigBusy(true);
-    const sourceSessionId = useChatStore.getState().conversationId;
-    try {
-      const store = useChatStore.getState();
-      if (showClaudePermissionMode) await store.setClaudePermissionMode(mode);
-      else if (showCodexApprovalMode) await store.setCodexApprovalMode(mode);
-      return true;
-    } catch (error) {
-      if (useChatStore.getState().conversationId === sourceSessionId)
-        setCommandError(error instanceof Error ? error.message : "Unable to change permissions");
-      return false;
-    } finally {
-      configBusyRef.current = false;
-      setConfigBusy(false);
-    }
-  };
-  // Modes this session refused during a Shift+Tab cycle (e.g. Auto when the
-  // account lacks it), skipped by later presses so the cycle can't get stuck.
+  // Modes this session refused (e.g. Auto when the account lacks it). Shift+Tab
+  // skips them until one is applied, so the cycle can't get stuck.
   const refusedCycleModesRef = useRef<{ sessionId: string | null; modes: Set<string> }>({
     sessionId: null,
     modes: new Set(),
   });
+  const refusedCycleModes = (sessionId: string | null): Set<string> => {
+    if (refusedCycleModesRef.current.sessionId !== sessionId)
+      refusedCycleModesRef.current = { sessionId, modes: new Set() };
+    return refusedCycleModesRef.current.modes;
+  };
+  /** Applies *mode*, remembering whether the server refused it. */
+  const changePermission = async (mode: string): Promise<void> => {
+    if (isReadOnly || unreachable || configBusyRef.current) return;
+    configBusyRef.current = true;
+    setConfigBusy(true);
+    const sourceSessionId = useChatStore.getState().conversationId;
+    // null: a transport failure, which says nothing about the mode itself.
+    let refused: boolean | null = null;
+    try {
+      const store = useChatStore.getState();
+      if (showClaudePermissionMode) await store.setClaudePermissionMode(mode);
+      else if (showCodexApprovalMode) await store.setCodexApprovalMode(mode);
+      const after = useChatStore.getState();
+      const landed = showClaudePermissionMode
+        ? after.claudePermissionMode
+        : after.codexApprovalMode;
+      // The store reconciles to the mode the server confirms the session reached.
+      refused = Boolean(landed) && landed !== mode;
+    } catch (error) {
+      if (useChatStore.getState().conversationId === sourceSessionId)
+        setCommandError(error instanceof Error ? error.message : "Unable to change permissions");
+      refused = error instanceof ApiError ? true : null;
+    } finally {
+      configBusyRef.current = false;
+      setConfigBusy(false);
+    }
+    if (refused === null || useChatStore.getState().conversationId !== sourceSessionId) return;
+    const modes = refusedCycleModes(sourceSessionId);
+    if (refused) modes.add(mode);
+    else modes.delete(mode);
+  };
   /** Shift+Tab: step to the next permission mode. Returns whether it took the key. */
   const cyclePermissionMode = (): boolean => {
     if (!permissionControlInteractive) return false;
     // Hold the key while a change is in flight so focus doesn't jump away.
     if (configBusyRef.current) return true;
-    const sessionId = useChatStore.getState().conversationId;
-    if (refusedCycleModesRef.current.sessionId !== sessionId)
-      refusedCycleModesRef.current = { sessionId, modes: new Set() };
-    const refused = refusedCycleModesRef.current.modes;
     const next = nextCycledPermissionMode(
-      permissionVocabularyHarness,
+      permissionVocabulary.harness,
       permissionOptions,
       selectedPermissionMode,
-      refused,
+      refusedCycleModes(useChatStore.getState().conversationId),
     );
     if (next === null) return false;
-    void changePermission(next).then((applied) => {
-      if (!applied && refusedCycleModesRef.current.sessionId === sessionId) refused.add(next);
-    });
+    void changePermission(next);
     return true;
   };
   useEffect(() => setGoalDialogOpen(false), [conversationId]);

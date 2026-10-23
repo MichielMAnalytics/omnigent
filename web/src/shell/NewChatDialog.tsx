@@ -37,6 +37,7 @@ import {
 import {
   codexCreateApprovalOptions,
   applyCodexApprovalSelection,
+  codexApprovalSelectionValue,
 } from "@/lib/codexApprovalOptions";
 import { isPermissionModeCycleKey, nextCycledPermissionMode } from "@/lib/permissionModeCycle";
 import {
@@ -4188,20 +4189,16 @@ export function NewChatLandingScreen() {
     else if (supportsDevinPermission) setDevinPermissionMode(mode);
     rememberPickerOptions(selectedNativeHarness, { mode });
   };
-  const selectedDirectMode =
-    selectedNativeHarness === "claude-native"
-      ? permissionMode
-      : selectedNativeHarness === "codex-native"
-        ? bypassSandbox
-          ? CODEX_NATIVE_BYPASS_APPROVAL_VALUE
-          : approvalMode
-        : selectedNativeHarness === "cursor-native"
-          ? cursorExecMode
-          : selectedNativeHarness === "antigravity-native"
-            ? agySkipMode
-            : selectedNativeHarness === "devin-native"
-              ? devinPermissionMode
-              : undefined;
+  const selectedDirectModeByHarness: Record<string, string> = {
+    "claude-native": permissionMode,
+    "codex-native": codexApprovalSelectionValue(approvalMode, bypassSandbox),
+    "cursor-native": cursorExecMode,
+    "antigravity-native": agySkipMode,
+    "devin-native": devinPermissionMode,
+  };
+  const selectedDirectMode = selectedNativeHarness
+    ? selectedDirectModeByHarness[selectedNativeHarness]
+    : undefined;
   /** Shift+Tab: step the launch permission mode. Returns whether it took the key. */
   const cycleDirectMode = (): boolean => {
     const pickerInteractive =

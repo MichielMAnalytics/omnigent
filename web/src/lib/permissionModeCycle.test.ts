@@ -10,8 +10,13 @@ import {
   AGY_NATIVE_SKIP_MODES,
   CURSOR_NATIVE_EXEC_MODES,
   DEVIN_NATIVE_PERMISSION_MODES,
+  knownPermissionModeConcept,
 } from "./nativeHarnessModes";
-import { isPermissionModeCycleKey, nextCycledPermissionMode } from "./permissionModeCycle";
+import {
+  isCyclablePermissionMode,
+  isPermissionModeCycleKey,
+  nextCycledPermissionMode,
+} from "./permissionModeCycle";
 
 const key = (overrides: Partial<Parameters<typeof isPermissionModeCycleKey>[0]> = {}) => ({
   key: "Tab",
@@ -115,5 +120,37 @@ describe("nextCycledPermissionMode", () => {
       null,
     );
     expect(nextCycledPermissionMode("claude-native", [], "default")).toBe(null);
+  });
+
+  it("classifies every mode the composers offer", () => {
+    const vocabularies: [string, readonly { value: string }[]][] = [
+      ["claude-native", CLAUDE_NATIVE_PERMISSION_MODES],
+      ["codex-native", codexCreateApprovalOptions()],
+      ["codex-native", CODEX_NATIVE_RUNTIME_APPROVAL_PRESETS],
+      ["cursor-native", CURSOR_NATIVE_EXEC_MODES],
+      ["antigravity-native", AGY_NATIVE_SKIP_MODES],
+      ["devin-native", DEVIN_NATIVE_PERMISSION_MODES],
+    ];
+    const unmapped = vocabularies.flatMap(([harness, options]) =>
+      options
+        .filter((option) => knownPermissionModeConcept(harness, option.value) === undefined)
+        .map((option) => `${harness}:${option.value}`),
+    );
+    expect(unmapped).toEqual([]);
+  });
+
+  it("keeps unmapped modes and harnesses out of the cycle", () => {
+    expect(isCyclablePermissionMode("claude-native", "someNewMode")).toBe(false);
+    expect(isCyclablePermissionMode("unknown-native", "default")).toBe(false);
+    expect(isCyclablePermissionMode(null, "default")).toBe(false);
+    expect(
+      nextCycledPermissionMode(
+        "unknown-native",
+        [{ value: "default" }, { value: "yolo" }],
+        "default",
+      ),
+    ).toBe(null);
+    expect(isCyclablePermissionMode("native-devin", "normal")).toBe(true);
+    expect(isCyclablePermissionMode("native-devin", "dangerous")).toBe(false);
   });
 });

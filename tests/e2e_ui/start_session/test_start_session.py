@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from typing import Any
 
@@ -552,6 +553,12 @@ def test_start_session_shift_tab_cycles_permission_mode(seeded_session: tuple[st
     _run_in_fresh_loop(_drive_permission_mode_hotkey(base_url, session_id))
 
 
+async def _hold_for_recording(page, milliseconds: int) -> None:
+    """Pause only in recorded runs, so a demo shows each state."""
+    if os.environ.get("OMNIGENT_E2E_RECORD_DIR"):
+        await page.wait_for_timeout(milliseconds)
+
+
 async def _drive_permission_mode_hotkey(base_url: str, session_id: str) -> None:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
@@ -570,13 +577,12 @@ async def _drive_permission_mode_hotkey(base_url: str, session_id: str) -> None:
             await expect(
                 page.get_by_role("menuitemradio", name="Bypass permissions", exact=True)
             ).to_be_visible()
-            # Brief holds below let a recording show each state.
-            await page.wait_for_timeout(1_200)
+            await _hold_for_recording(page, 1_200)
             await page.keyboard.press("Escape")
             await expect(page.get_by_test_id("new-chat-landing-permission-menu")).to_be_hidden()
             await prompt.click()
             await prompt.press_sequentially("plan the refactor first")
-            await page.wait_for_timeout(1_000)
+            await _hold_for_recording(page, 1_000)
 
             labels = (
                 "Auto",
@@ -592,7 +598,7 @@ async def _drive_permission_mode_hotkey(base_url: str, session_id: str) -> None:
                 await expect(perm).to_contain_text(label)
                 await expect(perm).not_to_contain_text("Bypass")
                 await expect(prompt).to_be_focused()
-                await page.wait_for_timeout(1_000)
+                await _hold_for_recording(page, 1_000)
             await expect(prompt).to_have_value("plan the refactor first")
 
             await page.get_by_test_id("new-chat-landing-submit").click()
@@ -605,7 +611,7 @@ async def _drive_permission_mode_hotkey(base_url: str, session_id: str) -> None:
                     "plan the refactor first", exact=True
                 )
             ).to_be_visible()
-            await page.wait_for_timeout(2_000)
+            await _hold_for_recording(page, 2_000)
         finally:
             # Closing the context first finalizes a recorded video.
             await page.context.close()
