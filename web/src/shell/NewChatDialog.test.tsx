@@ -11048,6 +11048,23 @@ describe("landing permission-mode shortcut", () => {
     expect(body.terminal_launch_args).toEqual(["--permission-mode", "plan"]);
   });
 
+  it("leaves the launch mode alone while the session is being created", async () => {
+    renderLanding();
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("repo"),
+    );
+    selectAgent("a1");
+    const input = screen.getByTestId("new-chat-landing-input");
+    expect(input).toHaveAttribute("aria-keyshortcuts", "Shift+Tab");
+    authenticatedFetchMock.mockReturnValue(new Promise<Response>(() => {}));
+    await submitAndReadBody();
+    const chip = screen.getByTestId("new-chat-landing-permission-chip");
+
+    await waitFor(() => expect(input).not.toHaveAttribute("aria-keyshortcuts"));
+    expect(pressShiftTab()).toBe(true);
+    expect(chip).toHaveTextContent("Manual");
+  });
+
   it("leaves Shift+Tab to focus traversal when no host can run the session", async () => {
     mockHosts([]);
     renderLanding();

@@ -2638,11 +2638,10 @@ function ComposerImpl(
     // Hold the key while a change is in flight so focus doesn't jump away.
     if (configBusyRef.current) return true;
     const sessionId = useChatStore.getState().conversationId;
+    // Read the store, not the render: a change may have landed since the last render.
+    const selected = currentPermissionMode();
     const cursor = cycleCursorRef.current;
-    const resume =
-      cursor?.sessionId === sessionId && cursor.from === selectedPermissionMode
-        ? cursor.past
-        : null;
+    const resume = cursor?.sessionId === sessionId && cursor.from === selected ? cursor.past : null;
     const resumed =
       resume === null
         ? null
@@ -2650,10 +2649,12 @@ function ComposerImpl(
             permissionVocabulary.harness,
             permissionOptions,
             resume,
-            new Set([selectedPermissionMode]),
+            new Set([selected]),
           );
     // With nothing else to move to, retry the failed mode.
-    const next = resumed ?? nextFromSelected;
+    const next =
+      resumed ??
+      nextCycledPermissionMode(permissionVocabulary.harness, permissionOptions, selected);
     if (next === null) return false;
     void changePermission(next).then((landed) => {
       if (!landed && useChatStore.getState().conversationId === sessionId)

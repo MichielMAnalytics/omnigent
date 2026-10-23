@@ -481,10 +481,7 @@ async def _prepare_claude_landing(
         re.compile(r"/v1/sessions\?(?!.*pinned=).*visibility=mine"), handle_agent_scan
     )
 
-    # Seed a recent working directory for the stubbed host so the
-    # working-directory chip auto-fills and Send can enable without
-    # touching the (host-less) file browser. Set before the SPA boots
-    # so the landing composer reads it on mount.
+    # Seed a recent workspace before the SPA mounts so Send enables without the file browser.
     await page.add_init_script(
         f"""window.localStorage.setItem(
             "omnigent:recent-workspaces",

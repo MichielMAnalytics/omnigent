@@ -4204,7 +4204,7 @@ export function NewChatLandingScreen() {
     !noExecutionTargetSelected &&
     visiblePermissionRow != null &&
     !(pickerLoading && !interactiveWhileLoading);
-  // Shift+Tab also waits out a create already in flight.
+  // Don't change the mode mid-create; the in-flight request already captured it.
   const nextDirectMode =
     directModePickerClickable && !creating
       ? nextCycledPermissionMode(selectedNativeHarness, directModeOptions, selectedDirectMode)

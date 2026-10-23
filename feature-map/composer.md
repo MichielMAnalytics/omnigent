@@ -329,9 +329,10 @@ Other connection providers alone do not enable the managed MCP picker.
   new-session composer,
   `tests/e2e_ui/start_session/test_start_session.py::test_start_session_shift_tab_cycles_permission_mode`.
   The in-session E2E is nightly. Component tests cover the in-flight, refused,
-  downgraded, next-lap, menu-reset, slash-menu, viewer, read-only and unreachable
-  states in `web/src/pages/ChatPage.composer.test.tsx`, and the no-host state in
-  `web/src/shell/NewChatDialog.test.tsx`; mode ordering and classification are in
+  downgraded, next-lap, menu-reset, two-mode retry, slash-menu, viewer, read-only
+  and unreachable states in `web/src/pages/ChatPage.composer.test.tsx`, mention-menu
+  priority in `web/src/pages/ChatPage.mention.test.tsx`, and the no-host and
+  create-in-flight states in `web/src/shell/NewChatDialog.test.tsx`; mode ordering and classification are in
   `web/src/lib/permissionModeCycle.test.ts`.
 - **`model-picker`, `effort-picker`, `permission-mode`, Fork dialog:** the
   permission-mode picker has component coverage in

@@ -261,7 +261,7 @@ describe("Composer @-file-mention browser (native sessions)", () => {
     expect(screen.getByText("@src/")).toBeInTheDocument();
     expect(setMode).not.toHaveBeenCalled();
 
-    // With the menu closed, the same key cycles the mode.
+    // Attaching a folder closes the menu, so the next press cycles the mode.
     fireEvent.keyDown(textarea(), { key: "Tab", shiftKey: true });
     await waitFor(() => expect(setMode).toHaveBeenCalledWith("auto"));
   });
