@@ -3,7 +3,7 @@
 // with a preview; pasted, dropped, or picked images and videos upload at once and
 // are embedded as provider URLs, so saving is one plain text edit.
 
-import { useCallback, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLinkIcon, Loader2Icon, PaperclipIcon, PencilIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -333,6 +333,9 @@ function PullRequestDescriptionEditor({
   const selection = useRef<{ start: number; end: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadCount = useRef(0);
+  const editorRef = useRef<HTMLDivElement>(null);
+  // Bring Save and Cancel into view when the editor opens low in the Summary tab.
+  useEffect(() => editorRef.current?.scrollIntoView?.({ block: "nearest" }), []);
 
   const attach = useCallback(
     (files: File[]) => {
@@ -399,7 +402,7 @@ function PullRequestDescriptionEditor({
 
   const error = update.isError ? update.error.message : draft.error;
   return (
-    <div className="space-y-2">
+    <div ref={editorRef} className="space-y-2">
       <Tabs defaultValue="write" componentId="github.panel.description.tabs" className="gap-2">
         <div className="flex items-center gap-1">
           <TabsList variant="line" aria-label="Description editor" className="h-auto gap-0 p-0">
