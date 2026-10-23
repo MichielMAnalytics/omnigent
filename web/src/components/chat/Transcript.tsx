@@ -485,13 +485,12 @@ export function activeTurnIdAtBubbleIndex(bubbles: Bubble[], midIndex: number): 
  * mount every bubble's markdown/tool subtree at once.
  *
  * The window is one flex child of the content div, sized to the full measured
- * height (`getTotalSize`): mounted rows sit in flow, padded to their virtual
- * offsets in place of the unmounted ones. Keeping the wrapper at full height
- * preserves `scrollHeight`, so StickToBottom's at-bottom math, the
- * TranscriptScrollbar, and the LatestTurnSpacer all keep measuring the whole
- * transcript even though most rows are unmounted. Rows are keyed by `bubbleKey`
- * so measured heights follow a bubble across a streaming rebuild or a history
- * prepend.
+ * height (`getTotalSize`), with mounted rows padded to their offsets. Keeping the
+ * wrapper at full height preserves `scrollHeight`, so StickToBottom's
+ * at-bottom math, the TranscriptScrollbar, and the LatestTurnSpacer all keep
+ * measuring the whole transcript even though most rows are unmounted. Rows are
+ * keyed by `bubbleKey` so measured heights follow a bubble across a streaming
+ * rebuild or a history prepend.
  */
 /**
  * Transcript geometry derived from the virtualizer's model (all items, mounted
