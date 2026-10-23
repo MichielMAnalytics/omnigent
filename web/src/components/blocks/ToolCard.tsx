@@ -408,43 +408,49 @@ function ShellTerminalPanel({
   const [showRaw, setShowRaw] = useState(false);
   const parsed = useMemo(() => (output === null ? null : parseShellToolOutput(output)), [output]);
   const hasOutput = parsed !== null && parsed.text.length > 0;
+  const actions = (
+    <CodeBlockActions className="my-0 mr-0 shrink-0 gap-1">
+      <WrapTextButton onToggle={() => setWrap((value) => !value)} wrap={wrap} />
+      <CopyTextButton label="Copy command" caption="command" text={command} />
+      {hasOutput && (
+        <CopyTextButton label="Copy output" caption="output" text={stripAnsi(parsed.text)} />
+      )}
+      <Button
+        aria-pressed={showRaw}
+        className={cn("h-6 px-1.5 text-muted-foreground", showRaw && "text-foreground")}
+        onClick={() => setShowRaw((value) => !value)}
+        size="xs"
+        type="button"
+        variant="ghost"
+        componentId="diagnostics.tool.toggle_raw_parameters"
+      >
+        Raw
+      </Button>
+    </CodeBlockActions>
+  );
   return (
     <div className="space-y-2">
       <CodeBlockContainer language="bash" data-testid="shell-tool-terminal">
-        <div className="flex items-center justify-between gap-2 px-3 pt-1.5">
-          <span
-            className="min-w-0 truncate font-mono text-muted-foreground text-xs"
-            title={cwd ?? undefined}
-          >
-            {cwd}
-          </span>
-          <CodeBlockActions className="my-0 mr-0 gap-1">
-            <WrapTextButton onToggle={() => setWrap((value) => !value)} wrap={wrap} />
-            <CopyTextButton label="Copy command" caption="command" text={command} />
-            {hasOutput && (
-              <CopyTextButton label="Copy output" caption="output" text={stripAnsi(parsed.text)} />
-            )}
-            <Button
-              aria-pressed={showRaw}
-              className={cn("h-6 px-1.5 text-muted-foreground", showRaw && "text-foreground")}
-              onClick={() => setShowRaw((value) => !value)}
-              size="xs"
-              type="button"
-              variant="ghost"
-              componentId="diagnostics.tool.toggle_raw_parameters"
-            >
-              Raw
-            </Button>
-          </CodeBlockActions>
-        </div>
-        {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
-        <div className="[&_code>span:first-child]:before:font-semibold [&_code>span:first-child]:before:text-muted-foreground [&_code>span:first-child]:before:content-['$_']">
-          <CodeBlockContent
-            code={command}
-            language="bash"
-            wrap={wrap}
-            className={cn(TERMINAL_PRE_CLASS, "pt-1 pb-1")}
-          />
+        {cwd !== null && (
+          <div className="flex items-center justify-between gap-2 px-3 pt-1.5">
+            <span className="min-w-0 truncate font-mono text-muted-foreground text-xs" title={cwd}>
+              {cwd}
+            </span>
+            {actions}
+          </div>
+        )}
+        {/* Without a cwd line the actions share the command's line instead of adding an empty one. */}
+        <div className={cn("flex items-start gap-2", cwd === null && "pt-1.5 pr-3")}>
+          {/* The `$` prompt is a pseudo-element so selecting or copying the command skips it. */}
+          <div className="min-w-0 flex-1 [&_code>span:first-child]:before:font-semibold [&_code>span:first-child]:before:text-muted-foreground [&_code>span:first-child]:before:content-['$_']">
+            <CodeBlockContent
+              code={command}
+              language="bash"
+              wrap={wrap}
+              className={cn(TERMINAL_PRE_CLASS, "pt-1 pb-1")}
+            />
+          </div>
+          {cwd === null && actions}
         </div>
         {hasOutput && (
           <OutputSection
