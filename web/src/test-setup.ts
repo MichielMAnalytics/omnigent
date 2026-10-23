@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import type * as ReactVirtualModule from "@tanstack/react-virtual";
 import { vi } from "vitest";
 
 // The @lobehub icon packages have broken nested-module resolution
@@ -87,10 +88,10 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 // indicators for the transcript) is what the unit tests assert. Shared by both
 // consumers, so the shape is the superset they read — honouring `getItemKey`
 // and exposing the offset/range/scroll handles the transcript's
-// VirtualBubbleList touches, so its real path doesn't throw under jsdom. A
-// `vi.fn` so tests can read the options a component passed.
+// VirtualBubbleList touches, so its real path doesn't throw under jsdom.
 const ROW = 200;
-vi.mock("@tanstack/react-virtual", () => ({
+vi.mock("@tanstack/react-virtual", async (importOriginal) => ({
+  measureElement: (await importOriginal<typeof ReactVirtualModule>()).measureElement,
   useVirtualizer: vi.fn(
     ({ count, getItemKey }: { count: number; getItemKey?: (i: number) => unknown }) => {
       const items = Array.from({ length: count }, (_, index) => ({

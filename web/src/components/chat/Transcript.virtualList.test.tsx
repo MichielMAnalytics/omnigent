@@ -91,6 +91,21 @@ it("remeasures scrollMargin when task padding changes without changing bubbles",
   await waitFor(() => expect(vi.mocked(useVirtualizer).mock.lastCall?.[0].scrollMargin).toBe(64));
 });
 
+it("measures rows at their unrounded border-box height", () => {
+  const view = render(list(false, document.createElement("div")));
+  const row = view.container.querySelector<HTMLElement>('[data-index="0"]')!;
+  const measure = vi.mocked(useVirtualizer).mock.lastCall![0].measureElement!;
+  const entry = { borderBoxSize: [{ blockSize: 58.796875, inlineSize: 600 }] };
+  const instance = {
+    options: { getItemKey: () => "user:user-1", horizontal: false },
+    indexFromElement: () => 0,
+    itemSizeCache: new Map([["user:user-1", 340.625]]),
+  };
+
+  expect(measure(row, entry as unknown as ResizeObserverEntry, instance as never)).toBe(58.796875);
+  expect(measure(row, undefined, instance as never)).toBe(340.625);
+});
+
 it("publishes navigation that distinguishes loaded and missing turns", async () => {
   const scrollEl = document.createElement("div");
   const onGeometryChange = vi.fn<(geometry: TranscriptGeometry) => void>();

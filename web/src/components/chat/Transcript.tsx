@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useStickToBottomContext } from "use-stick-to-bottom";
 import {
   Conversation,
@@ -485,12 +485,13 @@ export function activeTurnIdAtBubbleIndex(bubbles: Bubble[], midIndex: number): 
  * mount every bubble's markdown/tool subtree at once.
  *
  * The window is one flex child of the content div, sized to the full measured
- * height (`getTotalSize`) with each row absolutely positioned. Keeping the
- * wrapper at full height preserves `scrollHeight`, so StickToBottom's
- * at-bottom math, the TranscriptScrollbar, and the LatestTurnSpacer all keep
- * measuring the whole transcript even though most rows are unmounted. Rows are
- * keyed by `bubbleKey` so measured heights follow a bubble across a streaming
- * rebuild or a history prepend.
+ * height (`getTotalSize`): mounted rows sit in flow, padded to their virtual
+ * offsets in place of the unmounted ones. Keeping the wrapper at full height
+ * preserves `scrollHeight`, so StickToBottom's at-bottom math, the
+ * TranscriptScrollbar, and the LatestTurnSpacer all keep measuring the whole
+ * transcript even though most rows are unmounted. Rows are keyed by `bubbleKey`
+ * so measured heights follow a bubble across a streaming rebuild or a history
+ * prepend.
  */
 /**
  * Transcript geometry derived from the virtualizer's model (all items, mounted
@@ -733,6 +734,10 @@ export function VirtualBubbleList({
     gap: 16,
     overscan: 6,
     scrollMargin,
+    // Unrounded, unlike the library default: in-flow rows sit at their exact
+    // heights, so rounded sizes would drift each row off its virtual offset.
+    measureElement: (element, entry, instance) =>
+      entry?.borderBoxSize?.[0]?.blockSize ?? measureElement(element, entry, instance),
   });
 
   // An assistant bubble is keyed by its first item, so a history page that
