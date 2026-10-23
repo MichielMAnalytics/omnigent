@@ -934,10 +934,11 @@ export function VirtualBubbleList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bubbles, scrollEl, range, totalSize, virtualizer]);
 
-  // Older-history prepend compensation, in place of native scroll anchoring
-  // (off for this scroller). Snapshot every mounted row's offset each render;
-  // when a prepend lands, restore scrollTop so the topmost snapshotted row that
-  // still exists keeps its pre-prepend viewport position. A bubble the page renamed
+  // Older-history prepend compensation. Native scroll anchoring is off for
+  // this scroller, so it can't hold the read position across a prepend.
+  // Snapshot every mounted row's offset each render; when a
+  // prepend lands, restore scrollTop so the topmost snapshotted row that still
+  // exists keeps its pre-prepend viewport position. A bubble the page renamed
   // is skipped when any other row survives, and otherwise held by its bottom
   // edge: the page grew it at its top (the turn's earlier items), and what the
   // reader sees below it aligns to that edge, not to its start. Measured purely
