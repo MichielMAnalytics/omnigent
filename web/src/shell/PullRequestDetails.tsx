@@ -469,11 +469,11 @@ function PullRequestDescriptionEditor({
             placeholder={
               attachments ? "Markdown. Paste or drop images and videos to attach them." : "Markdown"
             }
-            className="max-h-[60vh] min-h-40 font-mono text-xs"
+            className="max-h-72 min-h-40 font-mono text-xs"
           />
         </TabsContent>
         <TabsContent value="preview">
-          <div className="min-h-40 rounded-lg border border-border px-2.5 py-2 text-ui break-words">
+          <div className="max-h-72 min-h-40 overflow-y-auto rounded-lg border border-border px-2.5 py-2 text-ui break-words">
             {draft.body.trim() ? (
               <MessageResponse
                 allowGitHubAttachmentImages
