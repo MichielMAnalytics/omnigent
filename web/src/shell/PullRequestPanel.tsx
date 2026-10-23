@@ -1705,8 +1705,12 @@ function PullRequestPanelDetails({
           </TabsList>
         </div>
 
-        {/* Summary: reviewers, CI checks, and the PR description. */}
-        <TabsContent value="summary" className="min-h-0 flex-1 overflow-y-auto">
+        {/* Summary: reviewers, CI checks, and the PR description. A size container,
+            so the description editor can fit itself to the visible height (cqh). */}
+        <TabsContent
+          value="summary"
+          className="min-h-0 flex-1 overflow-y-auto [container-type:size]"
+        >
           <PullRequestSummaryTab
             reviewers={
               pr.reviewers !== undefined && (

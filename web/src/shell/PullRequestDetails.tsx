@@ -313,6 +313,10 @@ export function PullRequestDescription({
   );
 }
 
+// At most the Summary tab's visible height less the editor's tab row, buttons, and
+// scroll margin, so Save stays in view once the editor scrolls itself into view.
+const EDITOR_HEIGHT = "min-h-40 max-h-[max(10rem,calc(100cqh-7rem))]";
+
 function PullRequestDescriptionEditor({
   conversationId,
   prUrl,
@@ -405,7 +409,7 @@ function PullRequestDescriptionEditor({
 
   const error = update.isError ? update.error.message : draft.error;
   return (
-    <div ref={editorRef} className="space-y-2">
+    <div ref={editorRef} className="scroll-my-3 space-y-2">
       <Tabs defaultValue="write" componentId="github.panel.description.tabs" className="gap-2">
         <div className="flex items-center gap-1">
           <TabsList variant="line" aria-label="Description editor" className="h-auto gap-0 p-0">
@@ -475,11 +479,16 @@ function PullRequestDescriptionEditor({
             placeholder={
               attachments ? "Markdown. Paste or drop images and videos to attach them." : "Markdown"
             }
-            className="max-h-72 min-h-40 font-mono text-xs"
+            className={cn(EDITOR_HEIGHT, "font-mono text-xs")}
           />
         </TabsContent>
         <TabsContent value="preview">
-          <div className="max-h-72 min-h-40 overflow-y-auto rounded-lg border border-border px-2.5 py-2 text-ui break-words">
+          <div
+            className={cn(
+              EDITOR_HEIGHT,
+              "overflow-y-auto rounded-lg border border-border px-2.5 py-2 text-ui break-words",
+            )}
+          >
             {draft.body.trim() ? (
               <MessageResponse
                 allowGitHubAttachmentImages
