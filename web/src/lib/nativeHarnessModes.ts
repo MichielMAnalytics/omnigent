@@ -76,7 +76,8 @@ export function knownPermissionModeConcept(
   value: string | null | undefined,
 ): PermissionModeConcept | undefined {
   if (!harness || !value) return undefined;
-  return PERMISSION_MODE_CONCEPTS[canonicalNativeHarness(harness)]?.[value];
+  const concepts = PERMISSION_MODE_CONCEPTS[canonicalNativeHarness(harness)];
+  return concepts && Object.hasOwn(concepts, value) ? concepts[value] : undefined;
 }
 
 /** Shared permission concept for presentation across native harness vocabularies. */

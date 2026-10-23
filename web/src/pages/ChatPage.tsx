@@ -2223,10 +2223,7 @@ export function subAgentComposerLabel(
   return title ?? session.subAgentName ?? session.agentName ?? "sub-agent";
 }
 
-/**
- * The in-session permission chip's options, with the harness vocabulary that
- * classifies them (a session's own harness string can be an alias).
- */
+/** The in-session chip's options and the canonical harness id that classifies them. */
 function composerPermissionVocabulary(
   claudeControl: boolean,
   devinControl: boolean,
@@ -2614,6 +2611,7 @@ function ComposerImpl(
       const store = useChatStore.getState();
       if (showClaudePermissionMode) await store.setClaudePermissionMode(mode);
       else if (showCodexApprovalMode) await store.setCodexApprovalMode(mode);
+      if (useChatStore.getState().conversationId !== sourceSessionId) return false;
       // The store reconciles to the mode the server confirms the session reached.
       const landed = currentPermissionMode() === mode;
       if (landed) cycleCursorRef.current = null;
@@ -2627,6 +2625,13 @@ function ComposerImpl(
       setConfigBusy(false);
     }
   };
+  const nextFromSelected = permissionControlInteractive
+    ? nextCycledPermissionMode(
+        permissionVocabulary.harness,
+        permissionOptions,
+        selectedPermissionMode,
+      )
+    : null;
   /** Shift+Tab: step to the next permission mode. Returns whether it took the key. */
   const cyclePermissionMode = (): boolean => {
     if (!permissionControlInteractive) return false;
@@ -2647,13 +2652,8 @@ function ComposerImpl(
             resume,
             new Set([selectedPermissionMode]),
           );
-    const next =
-      resumed ??
-      nextCycledPermissionMode(
-        permissionVocabulary.harness,
-        permissionOptions,
-        selectedPermissionMode,
-      );
+    // With nothing else to move to, retry the failed mode.
+    const next = resumed ?? nextFromSelected;
     if (next === null) return false;
     void changePermission(next).then((landed) => {
       if (!landed && useChatStore.getState().conversationId === sessionId)
@@ -3824,7 +3824,7 @@ function ComposerImpl(
             if (backdropRef.current) backdropRef.current.scrollTop = e.currentTarget.scrollTop;
           },
           "aria-label": "Message the agent",
-          "aria-keyshortcuts": permissionControlInteractive ? "Shift+Tab" : undefined,
+          "aria-keyshortcuts": nextFromSelected === null ? undefined : "Shift+Tab",
           placeholder: composerLockedByBtw
             ? "Side chat open — press Esc to close"
             : readOnlyReason !== null

@@ -2951,6 +2951,32 @@ describe("Composer permission-mode shortcut", () => {
     expect(setApproval.mock.calls.map(([mode]) => mode)).toEqual(["ask-for-approval"]);
   });
 
+  it("retries a failed mode when it is the only other safe one", async () => {
+    useChatStore.setState({
+      conversationId: "cycle-codex-retry",
+      sessionHarness: "codex-native",
+      codexApprovalMode: "ask-for-approval",
+    });
+    let call = 0;
+    const setApproval = vi
+      .spyOn(useChatStore.getState(), "setCodexApprovalMode")
+      .mockImplementation(async (mode) => {
+        if (call++ === 0) throw new ApiError("Runner refused", 503, "runner_unavailable");
+        useChatStore.setState({ codexApprovalMode: mode });
+      });
+    renderWithTooltips(<Composer {...composerProps({ showCodexApprovalMode: true })} />);
+
+    pressShiftTab(textarea());
+    await screen.findByText("Runner refused");
+    await settled();
+    expect(pressShiftTab(textarea())).toBe(false);
+    await waitFor(() => expect(chip()).toHaveTextContent("Approve for me"));
+    expect(setApproval.mock.calls.map(([mode]) => mode)).toEqual([
+      "approve-for-me",
+      "approve-for-me",
+    ]);
+  });
+
   it("does not cycle a Devin session into Dangerous", async () => {
     useChatStore.setState({
       conversationId: "cycle-devin",
@@ -2998,7 +3024,6 @@ describe("Composer permission-mode shortcut", () => {
 
     expect(textarea()).not.toHaveAttribute("aria-keyshortcuts");
     expect(pressShiftTab(textarea())).toBe(true);
-    expect(fireEvent.keyDown(textarea(), { key: "Tab", shiftKey: true, ctrlKey: true })).toBe(true);
     expect(setMode).not.toHaveBeenCalled();
   });
 });

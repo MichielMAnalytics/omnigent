@@ -1,21 +1,19 @@
 // Shift+Tab steps the permission chip in menu order; full-access modes stay menu-only.
 
+import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { knownPermissionModeConcept } from "@/lib/nativeHarnessModes";
 
-/** The key fields the cycle check reads from a React or DOM keyboard event. */
+/** The key fields the cycle check reads from a React keyboard event. */
 export interface PermissionModeCycleKeyEvent {
   key: string;
   shiftKey: boolean;
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
-  nativeEvent?: { isComposing?: boolean };
+  nativeEvent: { isComposing?: boolean; keyCode?: number };
 }
 
-/**
- * True for a bare Shift+Tab: no Ctrl (browser tab switching), Cmd, or Alt,
- * and not mid-IME composition.
- */
+/** Bare Shift+Tab (no Ctrl, Cmd or Alt), outside IME composition. */
 export function isPermissionModeCycleKey(event: PermissionModeCycleKeyEvent): boolean {
   return (
     event.key === "Tab" &&
@@ -23,7 +21,7 @@ export function isPermissionModeCycleKey(event: PermissionModeCycleKeyEvent): bo
     !event.ctrlKey &&
     !event.metaKey &&
     !event.altKey &&
-    !event.nativeEvent?.isComposing
+    !isImeCompositionKeyEvent(event)
   );
 }
 
@@ -37,14 +35,8 @@ export function isCyclablePermissionMode(
 }
 
 /**
- * The mode Shift+Tab moves to: the next cyclable option after *current* in menu
- * order, wrapping around. An unknown current mode starts from the top.
- *
- * @param harness Harness id used to classify modes, e.g. `"claude-native"`.
- * @param options The chip's menu options in display order.
- * @param current The selected mode value, or `null` when unknown.
- * @param unavailable Modes to skip, e.g. the selected mode when resuming past a failed press.
- * @returns The next mode value, or `null` when no other mode is reachable.
+ * Next cyclable option after *current* in menu order, wrapping; an unknown
+ * *current* starts from the top. Skips *unavailable*. Null when none is reachable.
  */
 export function nextCycledPermissionMode(
   harness: string | null | undefined,

@@ -39,14 +39,12 @@ and steers messages while the agent is busy.
   in the composer, and a composer pick is not reverted by later terminal turns.
 - `permission-mode`: the harness's native approval modes; the current mode is
   marked and the choice persists.
-- `permission-mode-hotkey`: Shift+Tab in either composer steps the permission
-  chip to the next mode in menu order, wrapping, and never selects a
-  full-access or unclassified mode. It acts only while the chip itself is
-  clickable. States: slash/mention menu open (menu wins), chip disabled or
-  absent (native focus move), change in flight (press swallowed), change
-  refused, downgraded or failed (the next press continues past that mode; it
-  comes round again on the next lap), no other safe mode (native focus move).
-  The prompt advertises the shortcut with `aria-keyshortcuts` while it acts.
+- `permission-mode-hotkey`: Shift+Tab in either composer steps the chip in menu
+  order, wrapping, never onto full-access or unclassified modes, while the chip
+  is clickable (landing: and no create is in flight). States: slash/mention menu
+  acting on Tab, chip disabled, change in flight, change refused or failed (next
+  press moves past it, or retries it when it is the only other safe mode), no
+  other safe mode (native focus move, no `aria-keyshortcuts`).
 - `managed-mcp-picker`: choose administrator-configured services before launch
   on a host or sandbox. States: loading, empty, error/retry, selected, unavailable,
   remembered selection, explicitly none, restored connection needing sign-in.

@@ -4199,21 +4199,20 @@ export function NewChatLandingScreen() {
   const selectedDirectMode = selectedNativeHarness
     ? selectedDirectModeByHarness[selectedNativeHarness]
     : undefined;
-  /** Shift+Tab: step the launch permission mode. Returns whether it took the key. */
-  const directModePickerInteractive =
+  // Mirrors when the permission chip below renders clickable.
+  const directModePickerClickable =
     !noExecutionTargetSelected &&
     visiblePermissionRow != null &&
-    !(pickerLoading && !interactiveWhileLoading) &&
-    !creating;
+    !(pickerLoading && !interactiveWhileLoading);
+  // Shift+Tab also waits out a create already in flight.
+  const nextDirectMode =
+    directModePickerClickable && !creating
+      ? nextCycledPermissionMode(selectedNativeHarness, directModeOptions, selectedDirectMode)
+      : null;
+  /** Shift+Tab: step the launch permission mode. Returns whether it took the key. */
   const cycleDirectMode = (): boolean => {
-    if (!directModePickerInteractive) return false;
-    const next = nextCycledPermissionMode(
-      selectedNativeHarness,
-      directModeOptions,
-      selectedDirectMode,
-    );
-    if (next === null) return false;
-    selectDirectMode(next);
+    if (nextDirectMode === null) return false;
+    selectDirectMode(nextDirectMode);
     return true;
   };
   // Clear shared state on agent changes; the harness seed restores its own
@@ -6826,7 +6825,7 @@ export function NewChatLandingScreen() {
                 onPaste,
                 placeholder: pillSkills.length > 0 ? "" : placeholderText,
                 "aria-label": placeholderText,
-                "aria-keyshortcuts": directModePickerInteractive ? "Shift+Tab" : undefined,
+                "aria-keyshortcuts": nextDirectMode === null ? undefined : "Shift+Tab",
                 rows: 1,
                 autoFocus: !isMobileViewport,
                 "data-testid": "new-chat-landing-input",

@@ -24,6 +24,7 @@ const key = (overrides: Partial<Parameters<typeof isPermissionModeCycleKey>[0]> 
   ctrlKey: false,
   metaKey: false,
   altKey: false,
+  nativeEvent: {},
   ...overrides,
 });
 
@@ -36,6 +37,7 @@ describe("isPermissionModeCycleKey", () => {
     expect(isPermissionModeCycleKey(key({ altKey: true }))).toBe(false);
     expect(isPermissionModeCycleKey(key({ key: "Enter" }))).toBe(false);
     expect(isPermissionModeCycleKey(key({ nativeEvent: { isComposing: true } }))).toBe(false);
+    expect(isPermissionModeCycleKey(key({ nativeEvent: { keyCode: 229 } }))).toBe(false);
   });
 });
 
@@ -149,6 +151,8 @@ describe("nextCycledPermissionMode", () => {
 
   it("keeps unmapped modes and harnesses out of the cycle", () => {
     expect(isCyclablePermissionMode("claude-native", "someNewMode")).toBe(false);
+    expect(isCyclablePermissionMode("claude-native", "constructor")).toBe(false);
+    expect(isCyclablePermissionMode("claude-native", "toString")).toBe(false);
     expect(isCyclablePermissionMode("unknown-native", "default")).toBe(false);
     expect(isCyclablePermissionMode(null, "default")).toBe(false);
     expect(
