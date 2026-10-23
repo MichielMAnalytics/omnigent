@@ -2,7 +2,7 @@
 // fetch stubbed: edits post what the editor shows and settle to the host's answer,
 // a draft outlives the Summary tab unmounting, and pasted media upload into the draft.
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import type { PullRequestAttachment, PullRequestInfo } from "@/hooks/usePullRequests";
@@ -11,6 +11,7 @@ import {
   insertOnOwnLine,
   PullRequestDescription,
   PullRequestTitle,
+  rememberUploadedImage,
   resetPullRequestDescriptionDrafts,
 } from "./PullRequestDetails";
 
@@ -49,6 +50,19 @@ function stubFetch() {
     }),
   );
   return { edits, uploads };
+}
+
+/** Stub jsdom's missing object URLs, numbering each copy. */
+function stubObjectUrls() {
+  const created: Blob[] = [];
+  const revoked: string[] = [];
+  const original = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+  Object.assign(URL, {
+    createObjectURL: (blob: Blob) => `blob:copy-${created.push(blob)}`,
+    revokeObjectURL: (url: string) => void revoked.push(url),
+  });
+  onTestFinished(() => void Object.assign(URL, original));
+  return { created, revoked };
 }
 
 function json(body: unknown, status = 200): Response {
@@ -278,14 +292,9 @@ it("uploads a pasted image at the caret and embeds GitHub's URL", async () => {
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });
 
-it("previews a fresh upload from its local copy, which GitHub serves only once saved", async () => {
+it("shows this tab's uploads from local copies, before and after saving", async () => {
   const { uploads } = stubFetch();
-  const createObjectURL = vi.fn(() => "blob:http://localhost/local-copy");
-  const revokeObjectURL = vi.fn();
-  // jsdom has no object URLs.
-  const original = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
-  Object.assign(URL, { createObjectURL, revokeObjectURL });
-  onTestFinished(() => void Object.assign(URL, original));
+  const copies = stubObjectUrls();
   renderDetails();
 
   fireEvent.click(screen.getByRole("button", { name: "Edit description" }));
@@ -297,13 +306,62 @@ it("previews a fresh upload from its local copy, which GitHub serves only once s
   await waitFor(() => expect(editor()).toHaveValue(`![shot](${ASSET_URL})`));
   fireEvent.mouseDown(screen.getByRole("tab", { name: "Preview" }));
 
-  const preview = await screen.findByRole("img", { name: "shot" });
-  expect(preview).toHaveAttribute("src", "blob:http://localhost/local-copy");
-  expect(createObjectURL).toHaveBeenCalledWith(image);
+  expect(await screen.findByRole("img", { name: "shot" })).toHaveAttribute("src", "blob:copy-1");
+  expect(copies.created).toEqual([image]);
 
+  // A saved body names the same URL, which GitHub serves only some seconds later.
   vi.spyOn(window, "confirm").mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(revokeObjectURL).toHaveBeenCalledWith("blob:http://localhost/local-copy");
+  cleanup();
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <PullRequestDescription
+        conversationId="conv_1"
+        prUrl={PR_URL}
+        body={`![shot](${ASSET_URL})`}
+        editable
+        attachments
+      />
+    </QueryClientProvider>,
+  );
+  const saved = await screen.findByRole("img", { name: "shot" });
+  expect(saved).toHaveAttribute("src", "blob:copy-1");
+  expect(saved).toHaveAttribute("referrerpolicy", "no-referrer");
+  expect(copies.revoked).toEqual([]);
+});
+
+it("keeps no copies of videos and drops the oldest image copies past the cap", () => {
+  const copies = stubObjectUrls();
+  const video = new File(["mp4"], "demo.mp4", { type: "video/mp4" });
+  rememberUploadedImage(`${ASSET_URL}-video`, video);
+  expect(copies.created).toEqual([]);
+
+  for (let index = 0; index <= 50; index += 1) {
+    rememberUploadedImage(
+      `${ASSET_URL}-${index}`,
+      new File(["png"], "a.png", { type: "image/png" }),
+    );
+  }
+  expect(copies.revoked).toEqual(["blob:copy-1"]);
+});
+
+it("falls back to GitHub, and says so when GitHub can't serve the image", () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <PullRequestDescription
+        conversationId="conv_1"
+        prUrl={PR_URL}
+        body={`![other](${ASSET_URL})`}
+        editable={false}
+        attachments
+      />
+    </QueryClientProvider>,
+  );
+  const image = screen.getByRole("img", { name: "other" });
+  expect(image).toHaveAttribute("src", ASSET_URL);
+
+  fireEvent.error(image);
+  expect(screen.getByText("Image not available")).toBeInTheDocument();
 });
 
 it("puts an uploaded video on its own line and drops a failed upload", async () => {

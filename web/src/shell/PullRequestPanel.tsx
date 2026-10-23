@@ -99,7 +99,11 @@ import {
   type PullRequestComment,
   type PullRequestInfo,
 } from "@/hooks/usePullRequests";
-import { PullRequestDescription, PullRequestTitle } from "./PullRequestDetails";
+import {
+  PULL_REQUEST_MARKDOWN_COMPONENTS,
+  PullRequestDescription,
+  PullRequestTitle,
+} from "./PullRequestDetails";
 import { PullRequestLabels } from "./PullRequestLabels";
 import { PullRequestMerge } from "./PullRequestMerge";
 import { PullRequestReviewers } from "./PullRequestReviewers";
@@ -695,7 +699,9 @@ function PullRequestCommentCard({
         )}
       </div>
       <div className="text-ui break-words">
-        <MessageResponse allowGitHubAttachmentImages>{comment.body}</MessageResponse>
+        <MessageResponse allowGitHubAttachmentImages components={PULL_REQUEST_MARKDOWN_COMPONENTS}>
+          {comment.body}
+        </MessageResponse>
       </div>
     </li>
   );

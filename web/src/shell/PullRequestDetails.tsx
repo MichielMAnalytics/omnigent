@@ -3,7 +3,7 @@
 // with a preview; pasted, dropped, or picked images and videos upload at once and
 // are embedded as provider URLs, so saving is one plain text edit.
 
-import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useId, useRef, useState, useSyncExternalStore } from "react";
 import { ExternalLinkIcon, Loader2Icon, PaperclipIcon, PencilIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import type { Components } from "streamdown";
 import { MessageResponse } from "@/components/ai-elements/message";
+import { cn } from "@/lib/utils";
 import {
   uploadPullRequestAttachment,
   useUpdatePullRequestDetails,
@@ -32,20 +33,52 @@ export function attachmentMarkdown(attachment: PullRequestAttachment, fileName: 
   return `![${alt}](${attachment.url})`;
 }
 
-/** Markdown image renderer that shows a draft's own uploads from their local copies. */
-function localPreviewImages(previews: Record<string, string>): Components {
-  return {
-    img: ({ node: _node, src, alt, ...props }) => (
-      <img
-        {...props}
-        alt={alt ?? ""}
-        src={(typeof src === "string" && previews[src]) || src}
-        referrerPolicy="no-referrer"
-        className="max-w-full rounded-md"
-      />
-    ),
-  };
+// ── Uploaded image copies ───────────────────────────────────────────────────
+// GitHub serves a fresh upload only about 15s after a saved body links it, so the
+// images uploaded from this tab show from local copies, keyed by their unique
+// asset URL, until the page reloads. Videos render as links and are not kept.
+
+const MAX_UPLOADED_IMAGE_COPIES = 50;
+const uploadedImageCopies = new Map<string, string>();
+
+export function rememberUploadedImage(url: string, file: File): void {
+  if (!file.type.startsWith("image/")) return;
+  uploadedImageCopies.set(url, URL.createObjectURL(file));
+  for (const [oldest, copy] of uploadedImageCopies) {
+    if (uploadedImageCopies.size <= MAX_UPLOADED_IMAGE_COPIES) break;
+    URL.revokeObjectURL(copy);
+    uploadedImageCopies.delete(oldest);
+  }
 }
+
+/** A markdown image, from its local copy when this tab uploaded it; styled like Streamdown's. */
+function PullRequestImage({
+  node: _node,
+  src,
+  alt,
+  className,
+  ...props
+}: React.ComponentProps<"img"> & { node?: unknown }) {
+  const shown = (typeof src === "string" && uploadedImageCopies.get(src)) || src;
+  // Keyed by source, so the same element given a new URL tries it.
+  const [failedSrc, setFailedSrc] = useState<string | undefined>(undefined);
+  if (shown && failedSrc === shown) {
+    return <span className="text-xs text-muted-foreground italic">Image not available</span>;
+  }
+  return (
+    <img
+      {...props}
+      alt={alt ?? ""}
+      src={shown}
+      referrerPolicy="no-referrer"
+      onError={() => setFailedSrc(shown)}
+      className={cn("my-4 inline-block max-w-full rounded-lg", className)}
+    />
+  );
+}
+
+/** Markdown components for PR descriptions and comments. */
+export const PULL_REQUEST_MARKDOWN_COMPONENTS: Components = { img: PullRequestImage };
 
 // ── Description drafts ──────────────────────────────────────────────────────
 // Kept outside React so a draft, and uploads still landing in it, survive the
@@ -55,8 +88,6 @@ interface DescriptionDraft {
   body: string;
   uploading: number;
   error: string | null;
-  /** Local copies of this draft's uploads by URL; GitHub serves them only once a saved body links them. */
-  previews: Record<string, string>;
 }
 
 const descriptionDrafts = new Map<string, DescriptionDraft>();
@@ -75,15 +106,12 @@ function updateDescriptionDraft(
   if (!draft) return;
   const next = update(draft);
   if (next) descriptionDrafts.set(key, next);
-  else {
-    descriptionDrafts.delete(key);
-    Object.values(draft.previews).forEach((preview) => URL.revokeObjectURL(preview));
-  }
+  else descriptionDrafts.delete(key);
   draftListeners.forEach((listener) => listener());
 }
 
 function startDescriptionDraft(key: string, body: string): void {
-  descriptionDrafts.set(key, { body, uploading: 0, error: null, previews: {} });
+  descriptionDrafts.set(key, { body, uploading: 0, error: null });
   draftListeners.forEach((listener) => listener());
 }
 
@@ -98,9 +126,11 @@ export function insertOnOwnLine(body: string, text: string, start: number, end: 
   };
 }
 
-/** Forget every draft; for tests. */
+/** Forget every draft and uploaded image copy; for tests. */
 export function resetPullRequestDescriptionDrafts(): void {
-  for (const key of [...descriptionDrafts.keys()]) updateDescriptionDraft(key, () => null);
+  descriptionDrafts.clear();
+  uploadedImageCopies.forEach((copy) => URL.revokeObjectURL(copy));
+  uploadedImageCopies.clear();
   draftListeners.forEach((listener) => listener());
 }
 
@@ -269,7 +299,12 @@ export function PullRequestDescription({
         />
       ) : body ? (
         <div className="text-ui break-words">
-          <MessageResponse allowGitHubAttachmentImages>{body}</MessageResponse>
+          <MessageResponse
+            allowGitHubAttachmentImages
+            components={PULL_REQUEST_MARKDOWN_COMPONENTS}
+          >
+            {body}
+          </MessageResponse>
         </div>
       ) : (
         <p className="text-ui text-muted-foreground italic">No description provided.</p>
@@ -323,13 +358,14 @@ function PullRequestDescriptionEditor({
           return { ...current, body, uploading: current.uploading + 1 };
         });
         uploadPullRequestAttachment(conversationId, prUrl, file).then(
-          (attachment) =>
+          (attachment) => {
+            rememberUploadedImage(attachment.url, file);
             updateDescriptionDraft(draftKey, (current) => ({
               ...current,
               body: current.body.replace(placeholder, attachmentMarkdown(attachment, file.name)),
               uploading: current.uploading - 1,
-              previews: { ...current.previews, [attachment.url]: URL.createObjectURL(file) },
-            })),
+            }));
+          },
           (error: unknown) =>
             updateDescriptionDraft(draftKey, (current) => ({
               ...current,
@@ -361,7 +397,6 @@ function PullRequestDescriptionEditor({
     close();
   };
 
-  const previewImages = useMemo(() => localPreviewImages(draft.previews), [draft.previews]);
   const error = update.isError ? update.error.message : draft.error;
   return (
     <div className="space-y-2">
@@ -440,7 +475,10 @@ function PullRequestDescriptionEditor({
         <TabsContent value="preview">
           <div className="min-h-40 rounded-lg border border-border px-2.5 py-2 text-ui break-words">
             {draft.body.trim() ? (
-              <MessageResponse allowGitHubAttachmentImages components={previewImages}>
+              <MessageResponse
+                allowGitHubAttachmentImages
+                components={PULL_REQUEST_MARKDOWN_COMPONENTS}
+              >
                 {draft.body}
               </MessageResponse>
             ) : (
