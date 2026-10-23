@@ -183,8 +183,12 @@ def test_session_grid_drag_persist_live_updates_and_close(
         page.get_by_role("button", name="Expand right panel", exact=True).click()
         workspace = page.get_by_role("complementary", name="Workspace", exact=True)
         expect(workspace).to_be_visible()
-        pane_box = page.locator('[data-grid-session="grid-0"]').bounding_box()
-        assert pane_box["x"] + pane_box["width"] <= workspace.bounding_box()["x"]
+        # Measure both in one frame and retry: the rail's width animates open.
+        page.wait_for_function(
+            """() => document.querySelector('[data-grid-session="grid-0"]').getBoundingClientRect()
+                .right <= document.querySelector('aside[aria-label="Workspace"]')
+                .getBoundingClientRect().left"""
+        )
         _drag_session(page, "grid-1", "grid-0", "right")
         expect(page).to_have_url(re.compile(r"/grid/[^/]+$"))
         expect(page.get_by_test_id("new-chat-button")).not_to_have_class(
