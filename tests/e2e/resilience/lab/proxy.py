@@ -38,6 +38,7 @@ import itertools
 import re
 import socket
 import struct
+import sys
 import threading
 import time
 from collections.abc import Callable, Coroutine, Iterable
@@ -336,6 +337,7 @@ class FaultProxy:
         self._listen_port = listen_port
         self._intercept = intercept
         self._server: asyncio.base_events.Server | None = None
+        self._port_reservation: socket.socket | None = None
         self._connections: dict[int, _Connection] = {}
         self._rules: dict[int, _Rule] = {}
         self._ids = itertools.count(1)
@@ -510,7 +512,20 @@ class FaultProxy:
 
     async def _start(self) -> None:
         self._changed = asyncio.Event()
-        await self._listen()
+        try:
+            if sys.platform == "linux":
+                # Keep the port out of Linux's ephemeral allocator during refusal.
+                # Darwin's bound, non-listening sockets time out instead of refusing.
+                self._port_reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self._port_reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self._port_reservation.bind(("127.0.0.1", self._listen_port))
+                self._listen_port = int(self._port_reservation.getsockname()[1])
+            await self._listen()
+        except BaseException:
+            if self._port_reservation is not None:
+                self._port_reservation.close()
+                self._port_reservation = None
+            raise
         self._emit(
             "listen", port=self._listen_port, upstream=f"{self.upstream[0]}:{self.upstream[1]}"
         )
@@ -532,6 +547,9 @@ class FaultProxy:
         for rule_id in list(self._rules):
             self._rules.pop(rule_id, None)
         await self._unlisten()
+        if self._port_reservation is not None:
+            self._port_reservation.close()
+            self._port_reservation = None
         await self._end_matching(None, rst=False, reason="proxy_stop")
         self._signal_change()
 

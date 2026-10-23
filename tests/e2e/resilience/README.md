@@ -123,6 +123,12 @@ lab's isolated home. That noise is local, and CI does not have it.
 Faults return a handle. Use it as a context manager or call `.clear()`. Every
 connection, fault and process action is appended to `<lab root>/events.jsonl`.
 
+On Linux, a bound, non-listening socket reserves each proxy's port until the
+proxy stops. Closing the listener for `refuse()` still gives clients a real
+connection refusal, while unrelated connections cannot claim its port through
+ephemeral allocation. macOS keeps the existing close/rebind behavior: a bound,
+non-listening socket there would make clients time out instead of refusing.
+
 `LabConfig(front="ingress")`, the default, makes a stopped server answer `502`
 like the Databricks Apps front door. `front="direct"` refuses connections, as
 a bare local server does.

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import socket
 import ssl
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -219,6 +221,37 @@ def test_refuse_by_tag_resets_only_matching_new_connections(loop_thread: LoopThr
         refused.close()
         with contextlib.closing(_connect(proxy, _HTTP)) as allowed:
             assert _recv(allowed) == b"echo:" + _HTTP
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Non-listening reservations refuse on Linux")
+def test_refuse_keeps_port_reserved_through_nested_faults(loop_thread: LoopThread) -> None:
+    upstream = _upstream(loop_thread)
+    proxy = _proxy(loop_thread, upstream)
+    try:
+        first = proxy.refuse()
+        second = proxy.refuse()
+        first.clear()
+        with socket.socket() as competitor:
+            with pytest.raises(OSError) as error:
+                competitor.bind(("127.0.0.1", proxy.port))
+            assert error.value.errno == errno.EADDRINUSE
+        with pytest.raises(ConnectionRefusedError):
+            socket.create_connection(("127.0.0.1", proxy.port), timeout=1)
+        second.clear()
+        with contextlib.closing(_connect(proxy, _HTTP)) as recovered:
+            assert _recv(recovered) == b"echo:" + _HTTP
+    finally:
+        proxy.stop()
+
+
+def test_stop_releases_port_during_refusal(loop_thread: LoopThread) -> None:
+    upstream = _upstream(loop_thread)
+    proxy = _proxy(loop_thread, upstream)
+    fault = proxy.refuse()
+    proxy.stop()
+    fault.clear()
+    with socket.socket() as replacement:
+        replacement.bind(("127.0.0.1", proxy.port))
 
 
 def test_unreachable_upstream_is_a_gateway_error_or_a_reset(loop_thread: LoopThread) -> None:
