@@ -226,13 +226,44 @@ def test_private_manager_launch_send_read_and_sharing(
                 ]
                 assert [g["user_id"] for g in grants] == ["local"]
 
+                before_managed = {
+                    row["id"]
+                    for row in client.get("/v1/sessions", params={"visibility": "mine"}).json()[
+                        "data"
+                    ]
+                }
+                configure(
+                    "MANAGER_SEND_READ_CREATE_MANAGED",
+                    [
+                        {
+                            "tool_calls": [
+                                tool(
+                                    "sys_session_create",
+                                    {"agent_id": agent, "placement": "managed"},
+                                    "managed",
+                                )
+                            ]
+                        },
+                        {"text": "MANAGED_UNAVAILABLE"},
+                    ],
+                )
+                send(manager, "MANAGER_SEND_READ_CREATE_MANAGED")
+                wait_text(manager, "MANAGED_UNAVAILABLE")
+                assert "Managed sandboxes are unavailable" in json.dumps(get_mock_requests(mock))
+                assert {
+                    row["id"]
+                    for row in client.get("/v1/sessions", params={"visibility": "mine"}).json()[
+                        "data"
+                    ]
+                } == before_managed
+
                 shared = client.put(
                     f"/v1/sessions/{manager}/permissions",
                     json={"user_id": "__public__", "level": 1},
                 )
                 assert shared.status_code == 200, shared.text
                 configure(
-                    "MANAGER_SEND_READ_CREATE_BLOCK",
+                    "MANAGER_SEND_READ_CREATE_MANAGED_BLOCK",
                     [
                         {
                             "tool_calls": [
@@ -246,7 +277,7 @@ def test_private_manager_launch_send_read_and_sharing(
                         {"text": "MANAGER_BLOCKED"},
                     ],
                 )
-                send(manager, "MANAGER_SEND_READ_CREATE_BLOCK")
+                send(manager, "MANAGER_SEND_READ_CREATE_MANAGED_BLOCK")
                 wait_text(manager, "MANAGER_BLOCKED")
                 assert "MUST_NOT_DELIVER" not in json.dumps(items(worker))
                 assert "Shared sessions cannot" in json.dumps(get_mock_requests(mock))

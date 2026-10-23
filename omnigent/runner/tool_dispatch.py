@@ -3456,8 +3456,9 @@ async def _execute_session_create(
       inside the caller's working directory) via the multipart
       ``POST /v1/sessions`` create.
 
-    Both modes force ``parent_session_id`` to the caller (child-only).
-    The child inherits the caller's runner (server-side affinity), so a
+    The default placement forces ``parent_session_id`` to the caller.
+    Independent placements use the server's gated orchestration endpoint.
+    A child inherits the caller's runner (server-side affinity), so a
     queued initial message starts a turn immediately. Returns a handle
     the orchestrator can monitor (``sys_session_get_history`` /
     ``sys_session_get_info``) or drive (``sys_session_send`` by
@@ -3501,8 +3502,8 @@ async def _execute_session_create(
             }
         )
     placement = args.get("placement", "child")
-    if placement not in ("child", "same_host", "arclet"):
-        return json.dumps({"error": "placement must be child, same_host or arclet"})
+    if placement not in ("child", "same_host", "managed"):
+        return json.dumps({"error": "placement must be child, same_host or managed"})
     if placement != "child" and has_config_path:
         return json.dumps({"error": "Independent sessions require agent_id"})
     if has_config_path:
@@ -3542,17 +3543,25 @@ async def _execute_session_create(
         body.pop("parent_session_id")
         # The server derives the same host/workspace from this bound source.
         headers[ORCHESTRATION_SOURCE_HEADER] = conversation_id
-        if placement == "arclet":
-            body.update(host_type="managed", sandbox_provider="arclet")
+        if placement == "managed":
+            body["host_type"] = "managed"
             initial_items = body.pop("initial_items", None)
             if isinstance(initial_items, list) and initial_items:
                 body["initial_input"] = initial_items[0]
         else:
             body.pop("initial_items", None)
     try:
-        resp = await server_client.post("/v1/sessions", json=body, headers=headers, timeout=30.0)
+        endpoint = "/v1/sessions" if placement == "child" else "/v1/sessions/orchestrated"
+        resp = await server_client.post(endpoint, json=body, headers=headers, timeout=30.0)
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"sys_session_create failed: {exc}"})
+    if placement != "child" and resp.status_code in (404, 405):
+        return json.dumps(
+            {
+                "error": "Independent session creation is unavailable on this server "
+                "or the agent was not found",
+            }
+        )
     if resp.status_code == 404:
         return json.dumps({"error": "agent_not_found", "agent_id": agent_id})
     if resp.status_code in (401, 403):

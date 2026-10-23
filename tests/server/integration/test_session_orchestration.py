@@ -158,7 +158,7 @@ async def test_child_inherits_source_sharing(auth_client, peers, db_uri):
     assert not captured.get("posts")
 
 
-@pytest.mark.parametrize("placement", ["same_host", "arclet"])
+@pytest.mark.parametrize("placement", ["same_host", "managed"])
 @pytest.mark.parametrize("condition", ["flag_off", "shared", "binding"])
 async def test_creation_refuses_before_launch(
     auth_client, auth_app, peers, db_uri, placement, condition
@@ -204,20 +204,31 @@ async def test_same_host_still_requires_host_ownership(auth_client, auth_app, pe
     assert auth_app.state.host_registry.get(host_id).outbound_queue.empty()
 
 
-async def test_arclet_creation_is_private_and_saves_first_task(
-    auth_client, auth_app, peers, db_uri, monkeypatch
+@pytest.mark.parametrize("provider", ["modal", "daytona", "embedding"])
+async def test_managed_creation_uses_default_provider_and_saves_private_first_task(
+    auth_client, auth_app, peers, db_uri, monkeypatch, provider
 ):
     import asyncio
     from dataclasses import replace
 
+    from omnigent.server.managed_hosts import parse_sandbox_config
     from omnigent.server.routes.sessions import routes_core
     from omnigent.server.sharing_settings import DefaultPublicSessions
 
     source, _, _ = peers
-    deployment = auth_app.state.sandbox_config
-    auth_app.state.sandbox_config = replace(
-        deployment, configs=(replace(deployment.default, provider="arclet"),)
+    deployment = parse_sandbox_config(
+        {
+            "server_url": "https://managed-test.example.com",
+            "providers": [
+                {"provider": "lakebox"},
+                {"provider": "modal" if provider == "embedding" else provider},
+            ],
+        }
     )
+    assert deployment is not None
+    if provider == "embedding":
+        deployment = replace(deployment, configs=(replace(deployment.default, provider=provider),))
+    auth_app.state.sandbox_config = deployment
     auth_app.state.default_public_sessions = lambda: DefaultPublicSessions.ALL
     launched = asyncio.Event()
     release = asyncio.Event()
@@ -236,7 +247,7 @@ async def test_arclet_creation_is_private_and_saves_first_task(
                 arguments=json.dumps(
                     {
                         "agent_id": source["agent_id"],
-                        "placement": "arclet",
+                        "placement": "managed",
                         "message": "First task",
                     }
                 ),
@@ -247,7 +258,8 @@ async def test_arclet_creation_is_private_and_saves_first_task(
         assert "error" not in result, result
         await asyncio.wait_for(launched.wait(), timeout=2)
         session_id = result["conversation_id"]
-        assert captured["provider"] == "arclet"
+        assert captured["provider"] is None
+        assert captured["sandbox_config"].for_provider(None).provider == provider
         assert captured["owner"] == "alice"
         store = SqlAlchemyConversationStore(db_uri)
         assert store.get_conversation(session_id).parent_conversation_id is None
@@ -257,3 +269,81 @@ async def test_arclet_creation_is_private_and_saves_first_task(
     finally:
         release.set()
         await auth_app.state.startup_inputs.shutdown()
+
+
+@pytest.mark.parametrize("configured", [False, True])
+async def test_managed_creation_requires_launchable_provider(
+    auth_client, auth_app, peers, monkeypatch, configured
+):
+    from dataclasses import replace
+
+    from omnigent.server.routes.sessions import routes_core
+
+    source, _, _ = peers
+    deployment = auth_app.state.sandbox_config
+    auth_app.state.sandbox_config = (
+        replace(deployment, configs=(replace(deployment.default, managed_launch_supported=False),))
+        if configured
+        else None
+    )
+
+    async def unexpected_creation(*args, **kwargs):
+        pytest.fail("Unavailable managed creation must not create a session")
+
+    monkeypatch.setattr(routes_core, "_create_session_from_existing_agent", unexpected_creation)
+    result = json.loads(
+        await execute_tool(
+            tool_name="sys_session_create",
+            arguments=json.dumps({"agent_id": source["agent_id"], "placement": "managed"}),
+            server_client=auth_client,
+            conversation_id=source["id"],
+        )
+    )
+    assert "Managed sandboxes are unavailable" in result["detail"]
+
+
+async def test_orchestrated_endpoint_requires_source(auth_client, peers, monkeypatch):
+    from omnigent.server.routes.sessions import routes_core
+
+    source, _, _ = peers
+
+    async def unexpected_creation(*args, **kwargs):
+        pytest.fail("Missing source must not create a session")
+
+    monkeypatch.setattr(routes_core, "_create_session_from_existing_agent", unexpected_creation)
+    response = await auth_client.post(
+        "/v1/sessions/orchestrated", json={"agent_id": source["agent_id"]}
+    )
+    assert response.status_code == 403, response.text
+
+
+@pytest.mark.parametrize("placement", ["same_host", "managed"])
+async def test_unsupported_route_never_uses_ordinary_creation(
+    auth_client, auth_app, peers, monkeypatch, placement
+):
+    from omnigent.server.routes.sessions import routes_core
+
+    source, _, _ = peers
+    monkeypatch.setattr(
+        auth_app.router,
+        "routes",
+        [
+            r
+            for r in auth_app.router.routes
+            if getattr(r, "path", None) != "/v1/sessions/orchestrated"
+        ],
+    )
+
+    async def unexpected_creation(*args, **kwargs):
+        pytest.fail("Unsupported orchestration must not fall back to ordinary creation")
+
+    monkeypatch.setattr(routes_core, "_create_session_from_existing_agent", unexpected_creation)
+    result = json.loads(
+        await execute_tool(
+            tool_name="sys_session_create",
+            arguments=json.dumps({"agent_id": source["agent_id"], "placement": placement}),
+            server_client=auth_client,
+            conversation_id=source["id"],
+        )
+    )
+    assert "unavailable on this server" in result["error"]

@@ -927,8 +927,10 @@ class SysSessionCreateTool(Tool):
             "re-upload its bundle. Optionally queue an initial user "
             "message. By default the new session is a child of the caller. "
             "With agent_id, placement='same_host' creates an independent private session "
-            "on the caller's host/workspace; placement='arclet' provisions a new Arclet "
-            "when the server supports it. These placements require orchestration enabled "
+            "on the caller's host/workspace; placement='managed' provisions a new sandbox "
+            "using the server's configured default provider. Managed creation requires a "
+            "configured sandbox provider; use same_host for an existing connected host. "
+            "These placements require orchestration enabled "
             "and a private sending session. Independent sessions do not forward replies: "
             "read their status/history, and use sys_session_message for subsequent work. "
             "Returns {conversation_id, agent_id, title, status}; the "
@@ -957,9 +959,9 @@ class SysSessionCreateTool(Tool):
                     "properties": {
                         "placement": {
                             "type": "string",
-                            "enum": ["child", "same_host", "arclet"],
+                            "enum": ["child", "same_host", "managed"],
                             "description": (
-                                "Default child; same_host or arclet launches a private "
+                                "Default child; same_host or managed launches a private "
                                 "top-level session (agent_id only)."
                             ),
                         },

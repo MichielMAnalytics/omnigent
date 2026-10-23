@@ -93,6 +93,7 @@ from omnigent.server.routes._auth_helpers import (
     require_user as _require_user,
 )
 from omnigent.server.routes._content_type import (
+    require_json_content_type,
     require_json_or_multipart_content_type,
 )
 from omnigent.server.routes._errors import (
@@ -854,6 +855,23 @@ def register_core_routes(
         return runner_id, launch_failed
 
     @router.post(
+        "/sessions/orchestrated",
+        status_code=201,
+        response_model=None,
+        include_in_schema=False,
+        dependencies=[Depends(require_json_content_type), Depends(require_trusted_origin)],
+    )
+    async def create_orchestrated_session(
+        request: Request,
+    ) -> SessionResponse | CreatedSessionResponse:
+        """Use a distinct route so unsupported servers reject before creation."""
+        if not request.headers.get(ORCHESTRATION_SOURCE_HEADER):
+            raise OmnigentError(
+                "Independent sessions require an orchestration source", code=ErrorCode.FORBIDDEN
+            )
+        return await create_session(request)
+
+    @router.post(
         "/sessions",
         status_code=201,
         response_model=None,
@@ -959,6 +977,14 @@ def register_core_routes(
                 raise OmnigentError(
                     "Orchestration creates independent sessions", code=ErrorCode.INVALID_INPUT
                 )
+            if body.host_type == "managed":
+                deployment = getattr(request.app.state, "sandbox_config", None)
+                if deployment is None or not deployment.managed_launch_supported:
+                    raise OmnigentError(
+                        "Managed sandboxes are unavailable; configure a sandbox provider "
+                        "or use placement='same_host'",
+                        code=ErrorCode.INVALID_INPUT,
+                    )
             if body.host_type == "external":
                 if not source.host_id or not source.workspace:
                     raise OmnigentError(

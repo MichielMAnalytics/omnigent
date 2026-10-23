@@ -20,7 +20,7 @@ def test_native_message_schema(spec):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("placement", ["child", "same_host", "arclet"])
+@pytest.mark.parametrize("placement", ["child", "same_host", "managed"])
 async def test_create_placement(placement, monkeypatch):
     from omnigent.runner import subagent_work
 
@@ -51,14 +51,16 @@ async def test_create_placement(placement, monkeypatch):
     assert len(requests) == (2 if placement == "same_host" else 1)
     body = json.loads(requests[0].content)
     if placement == "child":
+        assert requests[0].url.path == "/v1/sessions"
         assert body["parent_session_id"] == "manager"
         register.assert_called_once()
     else:
+        assert requests[0].url.path == "/v1/sessions/orchestrated"
         assert "parent_session_id" not in body
         assert requests[0].headers[ORCHESTRATION_SOURCE_HEADER] == "manager"
         register.assert_not_called()
-    if placement == "arclet":
-        assert body["sandbox_provider"] == "arclet"
+    if placement == "managed":
+        assert "sandbox_provider" not in body
         assert body["host_type"] == "managed"
         assert body["initial_input"]["data"]["content"][0]["text"] == "Start"
         assert "initial_items" not in body
@@ -68,6 +70,31 @@ async def test_create_placement(placement, monkeypatch):
         assert "initial_items" not in body
         assert json.loads(requests[1].content)["data"]["message"] == "Start"
         assert result["initial_message"] == {"queued": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("placement", ["same_host", "managed"])
+@pytest.mark.parametrize("status", [404, 405])
+async def test_independent_creation_does_not_fall_back_on_unsupported_server(placement, status):
+    requests = []
+
+    def unsupported(request):
+        requests.append(request)
+        return httpx.Response(status, json={"detail": "Unsupported route"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(unsupported), base_url="http://server"
+    ) as client:
+        result = json.loads(
+            await execute_tool(
+                tool_name="sys_session_create",
+                arguments=json.dumps({"agent_id": "worker", "placement": placement}),
+                server_client=client,
+                conversation_id="manager",
+            )
+        )
+    assert "unavailable on this server" in result["error"]
+    assert [r.url.path for r in requests] == ["/v1/sessions/orchestrated"]
 
 
 @pytest.mark.asyncio
