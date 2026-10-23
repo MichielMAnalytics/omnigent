@@ -1,4 +1,4 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Bubble } from "@/lib/renderItems";
@@ -130,7 +130,9 @@ it("measures rows at their unrounded border-box height", () => {
   };
 
   expect(measure(row, entry as unknown as ResizeObserverEntry, instance as never)).toBe(58.796875);
-  expect(measure(row, undefined, instance as never)).toBe(340.625);
+  expect(measure(row, undefined, instance as never)).toBe(
+    measureElement(row, undefined, instance as never),
+  );
 });
 
 it("publishes navigation that distinguishes loaded and missing turns", async () => {
