@@ -4206,7 +4206,7 @@ export function NewChatLandingScreen() {
     !(pickerLoading && !interactiveWhileLoading);
   // Don't change the mode mid-create; the in-flight request already captured it.
   const nextDirectMode =
-    directModePickerClickable && !creating
+    directModePickerClickable && !creating && !checkingDbcert
       ? nextCycledPermissionMode(selectedNativeHarness, directModeOptions, selectedDirectMode)
       : null;
   /** Shift+Tab: step the launch permission mode. Returns whether it took the key. */

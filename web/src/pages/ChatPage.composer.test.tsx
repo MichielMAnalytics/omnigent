@@ -2857,10 +2857,12 @@ describe("Composer permission-mode shortcut", () => {
 
     pressShiftTab(input);
     await waitFor(() => expect(chip()).toBeDisabled());
+    expect(input).not.toHaveAttribute("aria-keyshortcuts");
     expect(pressShiftTab(input)).toBe(false);
     expect(setMode).toHaveBeenCalledTimes(1);
     finish();
     await settled();
+    expect(input).toHaveAttribute("aria-keyshortcuts", "Shift+Tab");
   });
 
   it("moves past a mode the server refused on the next press", async () => {

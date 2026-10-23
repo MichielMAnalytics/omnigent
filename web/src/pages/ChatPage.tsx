@@ -2629,7 +2629,7 @@ function ComposerImpl(
   const isSwitchableMode = (mode: string) =>
     permissionOptions.some((option) => option.value === mode);
   const nextFromSelected =
-    permissionControlInteractive && isSwitchableMode(selectedPermissionMode)
+    permissionControlInteractive && !configBusy && isSwitchableMode(selectedPermissionMode)
       ? nextCycledPermissionMode(
           permissionVocabulary.harness,
           permissionOptions,
