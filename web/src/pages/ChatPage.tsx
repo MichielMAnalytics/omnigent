@@ -2625,13 +2625,17 @@ function ComposerImpl(
       setConfigBusy(false);
     }
   };
-  const nextFromSelected = permissionControlInteractive
-    ? nextCycledPermissionMode(
-        permissionVocabulary.harness,
-        permissionOptions,
-        selectedPermissionMode,
-      )
-    : null;
+  // Leaving a mode the chip can't switch back to (e.g. Codex read-only) stays a menu pick.
+  const isSwitchableMode = (mode: string) =>
+    permissionOptions.some((option) => option.value === mode);
+  const nextFromSelected =
+    permissionControlInteractive && isSwitchableMode(selectedPermissionMode)
+      ? nextCycledPermissionMode(
+          permissionVocabulary.harness,
+          permissionOptions,
+          selectedPermissionMode,
+        )
+      : null;
   /** Shift+Tab: step to the next permission mode. Returns whether it took the key. */
   const cyclePermissionMode = (): boolean => {
     if (!permissionControlInteractive) return false;
@@ -2640,6 +2644,7 @@ function ComposerImpl(
     const sessionId = useChatStore.getState().conversationId;
     // Read the store, not the render: a change may have landed since the last render.
     const selected = currentPermissionMode();
+    if (!isSwitchableMode(selected)) return false;
     const cursor = cycleCursorRef.current;
     const resume = cursor?.sessionId === sessionId && cursor.from === selected ? cursor.past : null;
     const resumed =

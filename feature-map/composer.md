@@ -42,9 +42,11 @@ and steers messages while the agent is busy.
 - `permission-mode-hotkey`: Shift+Tab in either composer steps the chip in menu
   order, wrapping, never onto full-access or unclassified modes, while the chip
   is clickable (landing: and no create is in flight). States: slash/mention menu
-  acting on Tab, chip disabled, change in flight, change refused or failed (next
-  press moves past it, or retries it when it is the only other safe mode), no
-  other safe mode (native focus move, no `aria-keyshortcuts`).
+  acting on Tab, chip disabled, session in a mode the chip can't switch back to
+  (Codex read-only, Claude Don't ask; menu only), change in flight, change
+  refused or failed (next press moves past it, or retries it when it is the only
+  other safe mode), no other safe mode (native focus move, no
+  `aria-keyshortcuts`).
 - `managed-mcp-picker`: choose administrator-configured services before launch
   on a host or sandbox. States: loading, empty, error/retry, selected, unavailable,
   remembered selection, explicitly none, restored connection needing sign-in.

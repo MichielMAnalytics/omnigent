@@ -2977,6 +2977,32 @@ describe("Composer permission-mode shortcut", () => {
     ]);
   });
 
+  it.each([
+    { name: "a read-only Codex session", harness: "codex-native", codex: "read-only" },
+    { name: "a Claude session in Don't ask", harness: "claude-native", claude: "dontAsk" },
+  ])("leaves the mode alone in $name, which the chip can't switch back to", (session) => {
+    useChatStore.setState({
+      conversationId: "cycle-off-menu",
+      sessionHarness: session.harness,
+      claudePermissionMode: session.claude ?? "",
+      codexApprovalMode: session.codex ?? "",
+    });
+    const setMode = spyClaudeSetter();
+    const setApproval = vi.spyOn(useChatStore.getState(), "setCodexApprovalMode");
+    renderWithTooltips(
+      <Composer
+        {...composerProps(
+          session.codex ? { showCodexApprovalMode: true } : { showClaudePermissionMode: true },
+        )}
+      />,
+    );
+
+    expect(textarea()).not.toHaveAttribute("aria-keyshortcuts");
+    expect(pressShiftTab(textarea())).toBe(true);
+    expect(setMode).not.toHaveBeenCalled();
+    expect(setApproval).not.toHaveBeenCalled();
+  });
+
   it("does not cycle a Devin session into Dangerous", async () => {
     useChatStore.setState({
       conversationId: "cycle-devin",
