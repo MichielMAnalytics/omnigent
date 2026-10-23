@@ -27,12 +27,13 @@ function list(
   scrollEl: HTMLElement,
   onGeometryChange: (geometry: TranscriptGeometry) => void = vi.fn(),
   disableVirtualization = false,
+  bubbles: Bubble[] = [bubble],
 ) {
   return (
     <Conversation>
       <ConversationContent>
         <VirtualBubbleList
-          bubbles={[bubble]}
+          bubbles={bubbles}
           scrollEl={scrollEl}
           lastAssistantIndex={-1}
           showsWorking={false}
@@ -80,15 +81,41 @@ it("remeasures scrollMargin when task padding changes without changing bubbles",
   });
   scrollEl.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
 
-  const view = render(list(false, scrollEl));
-  const row = view.container.querySelector<HTMLElement>('[data-index="0"]')!;
-  expect(row).toHaveAttribute("data-bubble-key", "user:user-1");
-  const wrapper = row.parentElement!;
-  wrapper.getBoundingClientRect = () => ({ top: 64 }) as DOMRect;
+  const bubbles = ["user-0", "user-1", "user-2"].map((itemId) => ({ ...bubble, itemId }));
+  // Mount only the middle row, at the library's offsets: 200px rows `gap` apart after `scrollMargin`.
+  const passThrough = vi.mocked(useVirtualizer).getMockImplementation()!;
+  vi.mocked(useVirtualizer).mockImplementation((options) => {
+    const start = options.scrollMargin! + 200 + options.gap!;
+    const row = {
+      index: 1,
+      key: options.getItemKey!(1),
+      start,
+      size: 200,
+      end: start + 200,
+      lane: 0,
+    };
+    const totalSize = 3 * 200 + 2 * options.gap!;
+    return {
+      ...passThrough(options),
+      getVirtualItems: () => [row],
+      getTotalSize: () => totalSize,
+    } as never;
+  });
+  try {
+    const view = render(list(false, scrollEl, vi.fn(), false, bubbles));
+    const row = view.container.querySelector<HTMLElement>('[data-index="1"]')!;
+    expect(row).toHaveAttribute("data-bubble-key", "user:user-1");
+    const wrapper = row.parentElement!;
+    expect(wrapper).toHaveStyle("padding-top: 216px; padding-bottom: 216px");
+    wrapper.getBoundingClientRect = () => ({ top: 64 }) as DOMRect;
 
-  view.rerender(list(true, scrollEl));
+    view.rerender(list(true, scrollEl, vi.fn(), false, bubbles));
 
-  await waitFor(() => expect(vi.mocked(useVirtualizer).mock.lastCall?.[0].scrollMargin).toBe(64));
+    await waitFor(() => expect(vi.mocked(useVirtualizer).mock.lastCall?.[0].scrollMargin).toBe(64));
+    expect(wrapper).toHaveStyle("padding-top: 216px; padding-bottom: 216px");
+  } finally {
+    vi.mocked(useVirtualizer).mockImplementation(passThrough);
+  }
 });
 
 it("measures rows at their unrounded border-box height", () => {
