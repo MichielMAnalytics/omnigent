@@ -9200,8 +9200,7 @@ class _OfflineRunnerClient:
         del params, timeout
         raise OmnigentError(f"runner is not connected ({url})", code=ErrorCode.RUNNER_UNAVAILABLE)
 
-    async def post(self, url: str, *, json: Any = None, timeout: float | None = None) -> Any:
-        del json, timeout
+    async def post(self, url: str, **_kwargs: Any) -> Any:
         raise OmnigentError(f"runner is not connected ({url})", code=ErrorCode.RUNNER_UNAVAILABLE)
 
 
@@ -9915,6 +9914,48 @@ async def test_pr_edit_reaches_offline_host(
     assert captured["op"] == op
     assert captured["session_id"] == _OFFLINE_SESSION
     assert captured["params"] == {"pr_url": url, **params}
+
+
+@pytest.mark.asyncio
+async def test_pr_attachment_reaches_offline_host_base64_encoded(
+    offline_env_client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the runner offline the file crosses the host tunnel, within the frame limit."""
+    import base64
+
+    from omnigent.server.routes import _host_filesystem
+    from omnigent.server.routes.sessions import routes_resources
+
+    captured: list[dict[str, Any]] = []
+    asset = {
+        "object": "session.github.pr_attachment",
+        "url": "https://github.com/user-attachments/assets/1",
+    }
+
+    async def write(**kwargs: Any) -> dict[str, Any]:
+        captured.append(kwargs)
+        return asset
+
+    monkeypatch.setattr(_host_filesystem, "write_workspace_from_host", write)
+    path = f"/v1/sessions/{_OFFLINE_SESSION}/resources/github/attachments"
+    url = "https://github.com/example/second/pull/42"
+    upload = {"file": ("shot.png", b"\x89PNG-bytes", "image/png")}
+
+    uploaded = await offline_env_client.post(path, data={"pr_url": url}, files=upload)
+    monkeypatch.setattr(routes_resources, "_MAX_TUNNELED_PR_ATTACHMENT_BYTES", 4)
+    too_large = await offline_env_client.post(path, data={"pr_url": url}, files=upload)
+
+    assert (uploaded.status_code, uploaded.json()) == (200, asset), uploaded.text
+    [call] = captured
+    assert call["op"] == "github_attachment_upload"
+    assert call["timeout"] == routes_resources._PR_ATTACHMENT_PROXY_TIMEOUT_S
+    params = call["params"]
+    assert (params["pr_url"], params["name"]) == (url, "shot.png")
+    assert base64.b64decode(params["content_base64"]) == b"\x89PNG-bytes"
+    assert too_large.status_code == 413
+    assert "runner is online" in too_large.json()["detail"]
+    # Base64 grows the file by a third; the encoded frame must fit the host's 100 MB limit.
+    assert routes_resources._MAX_TUNNELED_PR_ATTACHMENT_BYTES * 4 / 3 < 100 * 1024 * 1024 * 0.95
 
 
 @pytest.mark.asyncio

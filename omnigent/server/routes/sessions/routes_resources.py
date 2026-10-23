@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import functools
 import mimetypes
@@ -146,6 +147,9 @@ _PR_EDIT_PROXY_TIMEOUT_S = 20.0
 _PR_ATTACHMENT_PROXY_TIMEOUT_S = 120.0
 # The largest PR attachment GitHub takes, a video; the runner checks each type's limit.
 _MAX_PR_ATTACHMENT_BYTES = 100 * 1024 * 1024
+# The host tunnel carries the file base64-encoded (a third larger) in one frame,
+# which the host accepts up to 100 MB.
+_MAX_TUNNELED_PR_ATTACHMENT_BYTES = 70 * 1024 * 1024
 
 # Admission gate bounding how many image uploads hold their raw bytes in memory
 # and decode/re-encode at once. Created lazily on first use so it binds to the
@@ -989,6 +993,7 @@ def register_resources_routes(
         conversation: Conversation,
         op: str,
         host_params: dict[str, Any],
+        timeout: float | None = None,
     ) -> dict[str, Any] | None:
         """Serve a workspace-mutating op over the session's host tunnel.
 
@@ -998,8 +1003,10 @@ def register_resources_routes(
         :param op: Host-side write op — ``"github_set_preference"``,
             ``"github_prs_update"``, ``"github_labels_update"``,
             ``"github_reviewers_update"``, ``"github_details_update"``,
-            ``"github_merge"``, or ``"github_disable_auto_merge"``.
+            ``"github_attachment_upload"``, ``"github_merge"``, or
+            ``"github_disable_auto_merge"``.
         :param host_params: Op-specific args for the host writer.
+        :param timeout: Seconds to wait for the host; the tunnel's default when ``None``.
         :returns: The refreshed payload, or ``None`` when no host is bound /
             connected / reachable (caller re-raises the runner-offline error).
         :raises HTTPException: On host-reported failures, reproducing the runner's
@@ -1026,6 +1033,7 @@ def register_resources_routes(
                 workspace=conversation.workspace,
                 session_id=session_id,
                 params=host_params,
+                **({"timeout": timeout} if timeout is not None else {}),
             )
         except HostFsUnavailableError:
             return None
@@ -3552,8 +3560,8 @@ def register_resources_routes(
         Upload an image or video to embed in the selected PR's description.
 
         The file goes to the provider without being kept by Omnigent, and the PR
-        is unchanged until a description that links it is saved. Needs the
-        runner online: the host tunnel does not carry file bytes.
+        is unchanged until a description that links it is saved. Falls back to
+        the host tunnel when the runner is offline, for files up to 70 MB.
 
         :param request: The incoming FastAPI request (for auth).
         :param session_id: Session/conversation identifier.
@@ -3563,21 +3571,31 @@ def register_resources_routes(
         """
         conv = await _validate_session(session_id, request, LEVEL_EDIT)
         content = await _read_upload_capped(file, _MAX_PR_ATTACHMENT_BYTES)
-        runner_client = await _get_runner_client_for_resource_access(session_id, conversation=conv)
-        if runner_client is None:
-            raise HTTPException(status_code=502, detail="no runner available for resource access")
+        name = file.filename or ""
         try:
-            resp = await runner_client.post(
-                f"/v1/sessions/{session_id}/resources/github/attachments",
-                params={"pr_url": pr_url, "name": file.filename or ""},
-                content=content,
-                headers={"Content-Type": "application/octet-stream"},
+            resp = await _post_attachment_to_runner(session_id, conv, pr_url, name, content)
+        except OmnigentError as exc:
+            if exc.code != ErrorCode.RUNNER_UNAVAILABLE:
+                raise
+            if len(content) > _MAX_TUNNELED_PR_ATTACHMENT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Files over 70 MB attach only while the session's runner is online.",
+                ) from exc
+            payload = await _write_workspace_via_host(
+                session_id,
+                conv,
+                op="github_attachment_upload",
+                host_params={
+                    "pr_url": pr_url,
+                    "name": name,
+                    "content_base64": base64.b64encode(content).decode("ascii"),
+                },
                 timeout=_PR_ATTACHMENT_PROXY_TIMEOUT_S,
             )
-        except (httpx.HTTPError, ConnectionError) as exc:
-            raise HTTPException(
-                status_code=502, detail="runner resource endpoint unavailable"
-            ) from exc
+            if payload is None:
+                raise
+            return payload
         try:
             result = resp.json()
         except ValueError:
@@ -3589,6 +3607,30 @@ def register_resources_routes(
                 detail=detail or "Cannot upload the file",
             )
         return result
+
+    async def _post_attachment_to_runner(
+        session_id: str, conv: Conversation, pr_url: str, name: str, content: bytes
+    ) -> httpx.Response:
+        """Forward an attachment's raw bytes to the runner.
+
+        :raises OmnigentError: ``runner_unavailable`` when the runner is offline.
+        :raises HTTPException: 502 when the runner cannot be reached otherwise.
+        """
+        runner_client = await _get_runner_client_for_resource_access(session_id, conversation=conv)
+        if runner_client is None:
+            raise HTTPException(status_code=502, detail="no runner available for resource access")
+        try:
+            return await runner_client.post(
+                f"/v1/sessions/{session_id}/resources/github/attachments",
+                params={"pr_url": pr_url, "name": name},
+                content=content,
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=_PR_ATTACHMENT_PROXY_TIMEOUT_S,
+            )
+        except (httpx.HTTPError, ConnectionError) as exc:
+            raise HTTPException(
+                status_code=502, detail="runner resource endpoint unavailable"
+            ) from exc
 
     # Generic single-resource lookup — registered AFTER typed
     # collections so "environments", "terminals", "files" are not
