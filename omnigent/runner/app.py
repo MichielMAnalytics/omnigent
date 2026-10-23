@@ -7322,6 +7322,7 @@ def create_runner_app(
         _model_dialog_watchers=_model_dialog_watchers,
         _native_cost_popup_config_file=_native_cost_popup_config_file,
         _native_pane_status=_native_pane_status,
+        _opencode_terminal_ensure_locks=_opencode_terminal_ensure_locks,
         _publish_event=_publish_event,
         _publish_turn_status=_publish_turn_status,
         _resolve_session_agent_spec=_resolve_session_agent_spec,
