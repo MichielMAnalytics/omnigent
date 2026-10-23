@@ -227,6 +227,19 @@ it("saves the description verbatim and closes the editor", async () => {
   expect(screen.getByRole("button", { name: "Edit description" })).toBeInTheDocument();
 });
 
+it("scrolls the opened editor into view, where scrolling returns a Promise", () => {
+  stubFetch();
+  // jsdom has no scrollIntoView; newer browsers' resolves a Promise.
+  const scrollIntoView = vi.fn(() => Promise.resolve());
+  Object.assign(Element.prototype, { scrollIntoView });
+  onTestFinished(() => void delete (Element.prototype as Partial<Element>).scrollIntoView);
+  const { view } = renderDetails();
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit description" }));
+  expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+  view.unmount();
+});
+
 it("keeps the description draft when the Summary tab unmounts", () => {
   stubFetch();
   const { view } = renderDetails();

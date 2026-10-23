@@ -335,7 +335,10 @@ function PullRequestDescriptionEditor({
   const uploadCount = useRef(0);
   const editorRef = useRef<HTMLDivElement>(null);
   // Bring Save and Cancel into view when the editor opens low in the Summary tab.
-  useEffect(() => editorRef.current?.scrollIntoView?.({ block: "nearest" }), []);
+  // Braced: newer browsers return a Promise, which React would call as a cleanup.
+  useEffect(() => {
+    editorRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, []);
 
   const attach = useCallback(
     (files: File[]) => {
