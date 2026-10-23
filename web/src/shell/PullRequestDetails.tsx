@@ -218,7 +218,7 @@ export function PullRequestTitle({
   }
 
   return (
-    <div className="group/title flex min-w-0 items-center gap-1">
+    <div className="flex min-w-0 items-center gap-1">
       <a
         href={url}
         target="_blank"
@@ -236,7 +236,7 @@ export function PullRequestTitle({
           aria-label="Edit title"
           title="Edit title"
           onClick={() => setDraft(title)}
-          className="shrink-0 text-muted-foreground opacity-0 group-hover/title:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+          className="shrink-0 text-muted-foreground"
         >
           <PencilIcon aria-hidden className="size-3" />
         </Button>
