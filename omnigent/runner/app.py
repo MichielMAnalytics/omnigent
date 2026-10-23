@@ -111,8 +111,6 @@ from omnigent.runner.mcp_execution_registry import (
 from omnigent.runner.mcp_routes import register_mcp_routes
 from omnigent.runner.model_option_routes import register_model_option_routes
 from omnigent.runner.native import (
-    _AUTO_FORWARDER_TASKS,
-    _AUTO_OPENCODE_SERVERS,
     _REPL_TERMINAL_NAME,
     _REPL_TERMINAL_SESSION_KEY,
     _SESSION_METADATA_PARAMS,
@@ -1392,6 +1390,25 @@ def create_runner_app(
     _antigravity_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _devin_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     app.state.antigravity_terminal_ensure_locks = _antigravity_terminal_ensure_locks
+    # Keyed by native agent key, which is also the pane's terminal name. Launch
+    # and ensure paths take a session's lock here; so does the idle pane reaper.
+    _native_terminal_ensure_locks = _require_full_native_lock_coverage(
+        {
+            "claude": _claude_terminal_ensure_locks,
+            "codex": _codex_terminal_ensure_locks,
+            "pi": _pi_terminal_ensure_locks,
+            "cursor": _cursor_terminal_ensure_locks,
+            "kiro": _kiro_terminal_ensure_locks,
+            "antigravity": _antigravity_terminal_ensure_locks,
+            "opencode": _opencode_terminal_ensure_locks,
+            "goose": _goose_terminal_ensure_locks,
+            "hermes": _hermes_terminal_ensure_locks,
+            "qwen": _qwen_terminal_ensure_locks,
+            "kimi": _kimi_terminal_ensure_locks,
+            "devin": _devin_terminal_ensure_locks,
+        }
+    )
+    app.state.native_terminal_ensure_locks = _native_terminal_ensure_locks
     _repl_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _active_turns: dict[str, asyncio.Task[None] | None] = {}
     app.state.active_turns = _active_turns
@@ -2716,22 +2733,7 @@ def create_runner_app(
             # (claude/codex/antigravity) add a pre_launch check and, for
             # claude/codex, a build_context enrichment. All wire the comment
             # relay (pi/opencode route their policy hook through it).
-            _launch_locks = _require_full_native_lock_coverage(
-                {
-                    "claude": _claude_terminal_ensure_locks,
-                    "codex": _codex_terminal_ensure_locks,
-                    "pi": _pi_terminal_ensure_locks,
-                    "cursor": _cursor_terminal_ensure_locks,
-                    "kiro": _kiro_terminal_ensure_locks,
-                    "antigravity": _antigravity_terminal_ensure_locks,
-                    "opencode": _opencode_terminal_ensure_locks,
-                    "goose": _goose_terminal_ensure_locks,
-                    "hermes": _hermes_terminal_ensure_locks,
-                    "qwen": _qwen_terminal_ensure_locks,
-                    "kimi": _kimi_terminal_ensure_locks,
-                    "devin": _devin_terminal_ensure_locks,
-                }
-            )[_native_agent.key]
+            _launch_locks = _native_terminal_ensure_locks[_native_agent.key]
             _launch_ctx = NativeLaunchContext(
                 session_id=session_id,
                 resource_registry=resource_registry,
@@ -7779,13 +7781,43 @@ def create_runner_app(
                     panes.append(PaneRef(conv_id, terminal_id, name, socket_path))
             return panes
 
+        async def _server_confirms_turn_in_flight(conv_id: str) -> bool:
+            """Whether the server still records the session's turn as in flight.
+
+            Most native turns report their end to the server, which relays it here.
+            When that relay is lost, the runner's record says ``running`` until the
+            session is deleted; the server has the edge, so it settles the record.
+
+            :param conv_id: Session/conversation id, e.g. ``"conv_abc123"``.
+            :returns: ``False`` when the server reports the session settled, after
+                updating the runner's record to match; ``True`` otherwise,
+                including when the server cannot be asked.
+            """
+            try:
+                resp = await server_client.get(
+                    f"/v1/sessions/{conv_id}", params=_SESSION_METADATA_PARAMS, timeout=10.0
+                )
+            except httpx.HTTPError:
+                return True
+            status = resp.json().get("status") if resp.status_code == 200 else None
+            if not isinstance(status, str) or status in _IN_FLIGHT_SESSION_STATUSES:
+                return True
+            _logger.info(
+                "native pane reaper: server reports %s for conversation %s, whose turn "
+                "this runner still recorded as running",
+                status,
+                conv_id,
+                extra={"session_id": conv_id},
+            )
+            _native_pane_status[conv_id] = status
+            resource_registry.note_external_session_status(conv_id, status)
+            return False
+
         async def _native_pane_is_busy(pane: PaneRef) -> bool:
             conv_id = pane.conversation_id
             if conv_id in _active_turns or (
                 process_manager is not None and process_manager.has_active_turn(conv_id)
             ):
-                return True
-            if _native_pane_status.get(conv_id) == "running":
                 return True
             # A pane parked on a permission prompt emits nothing and reports no
             # active turn, so every signal above reads idle. Reaping it kills the
@@ -7805,49 +7837,58 @@ def create_runner_app(
                 PANE_OUTPUT_BUSY_WINDOW_S
             ):
                 return True
-            # Primary evidence: tmux stamps window_activity on every byte the
-            # pane emits, so a producing terminal stays busy even when the
-            # status pipeline above has silently stalled (a stalled forwarder
-            # once froze the busy signal and got a live session reaped).
-            activity_at = await asyncio.to_thread(
-                _tmux_window_activity_at, str(pane.socket_path), "main"
+            # Output is primary evidence, independent of the status pipeline (a
+            # stalled forwarder once froze it and got a live session reaped). The
+            # watcher's screen diff ignores title updates and identical repaints.
+            screen_changed = (
+                instance.screen_changed_within(PANE_OUTPUT_BUSY_WINDOW_S)
+                if instance is not None
+                else None
             )
-            return (
-                activity_at is not None and time.time() - activity_at < PANE_OUTPUT_BUSY_WINDOW_S
-            )
+            if screen_changed is None:
+                # No fresh watcher view: tmux stamps window_activity on every byte.
+                activity_at = await asyncio.to_thread(
+                    _tmux_window_activity_at, str(pane.socket_path), "main"
+                )
+                screen_changed = (
+                    activity_at is not None
+                    and time.time() - activity_at < PANE_OUTPUT_BUSY_WINDOW_S
+                )
+            if screen_changed:
+                return True
+            if _native_pane_status.get(conv_id) == "running":
+                return await _server_confirms_turn_in_flight(conv_id)
+            return False
 
         async def _reap_native_pane(pane: PaneRef) -> None:
             conv_id = pane.conversation_id
-            # A message can re-create the session while the close awaits pane
-            # shutdown; capture what this pane owned so only that is released.
-            forwarder = _AUTO_FORWARDER_TASKS.get(conv_id)
-            opencode_server = _AUTO_OPENCODE_SERVERS.get(conv_id)
-            relay_binding = _session_comment_relays.get(conv_id)
-            try:
-                await resource_registry.close_terminal(conv_id, pane.terminal_id)
-            finally:
-                # Closing a pane leaves its forwarder, helper server and tool
-                # relay running for the runner's lifetime. Release them in
-                # ``finally`` so a partially failed close cannot leak them.
-                await _native_runtime.teardown_codex_native_app_server(conv_id)
-                if forwarder is not None:
-                    await _cancel_auto_forwarder_task(conv_id, expected=forwarder)
-                if opencode_server is not None:
-                    await _native_runtime.teardown_opencode_native_server(
-                        conv_id, expected=opencode_server
+            reaped = _pane_reaper_registry.get(conv_id, pane.terminal_name, "main")
+            # Launch and ensure paths hold this lock, so a message that re-creates
+            # the session waits for the reap, then starts its own pane, forwarder,
+            # helper server and relay instead of having them torn down here.
+            lock = _native_terminal_ensure_locks[pane.terminal_name].setdefault(
+                conv_id, asyncio.Lock()
+            )
+            async with lock:
+                current = _pane_reaper_registry.get(conv_id, pane.terminal_name, "main")
+                if current is not None and current is not reaped:
+                    return
+                try:
+                    await resource_registry.close_terminal(conv_id, pane.terminal_id)
+                finally:
+                    # The pane's forwarder, helper server and tool relay outlive it
+                    # otherwise; ``finally`` so a partially failed close cannot leak them.
+                    await _native_runtime.teardown_codex_native_app_server(conv_id)
+                    await _cancel_auto_forwarder_task(conv_id)
+                    await _native_runtime.teardown_opencode_native_server(conv_id)
+                    if binding := _session_comment_relays.get(conv_id):
+                        _discard_comment_relay(conv_id, binding.relay)
+                    _publish_terminal_deleted_event(
+                        conversation_id=conv_id,
+                        terminal_name=pane.terminal_name,
+                        session_key="main",
+                        publish_event=_publish_event,
                     )
-                # A re-create during the close reuses the relay instead of replacing it.
-                if (
-                    relay_binding is not None
-                    and _pane_reaper_registry.get(conv_id, pane.terminal_name, "main") is None
-                ):
-                    _discard_comment_relay(conv_id, relay_binding.relay)
-                _publish_terminal_deleted_event(
-                    conversation_id=conv_id,
-                    terminal_name=pane.terminal_name,
-                    session_key="main",
-                    publish_event=_publish_event,
-                )
 
         app.state.native_pane_reaper = NativePaneReaper(
             list_native_panes=_native_panes_for_reaper,

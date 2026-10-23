@@ -481,24 +481,18 @@ class _ReapableStubResourceRegistry(_StubResourceRegistry):
     def __init__(self, tmp_path: Path) -> None:
         super().__init__(tmp_path)
         self.terminal_registry = TerminalRegistry()  # type: ignore[assignment]
-        # Re-register the pane on close, as a message re-creating the session would.
-        self.recreate_on_close = False
 
     async def close_terminal(self, session_id: str, terminal_id: str) -> bool:
         """The stub launched no pane, so there is nothing to close."""
-        del terminal_id
-        if self.recreate_on_close:
-            pane = make_test_terminal_instance("claude", "main", self._tmp_path)
-            self.terminal_registry._by_conversation[session_id] = {("claude", "main"): pane}
+        del session_id, terminal_id
         return True
 
 
 @pytest.mark.asyncio
 async def test_idle_pane_reap_closes_comment_relay(tmp_path: Path) -> None:
-    """Reaping an idle pane closes its relay, unless a re-create reused it meanwhile."""
-    resource_registry = _ReapableStubResourceRegistry(tmp_path)
+    """Reaping an idle pane closes its relay; the next launch starts a fresh one."""
     app = create_runner_app(
-        resource_registry=resource_registry,
+        resource_registry=_ReapableStubResourceRegistry(tmp_path),
         server_client=NullServerClient(),  # type: ignore[arg-type]
     )
     reaper = app.state.native_pane_reaper
@@ -527,9 +521,7 @@ async def test_idle_pane_reap_closes_comment_relay(tmp_path: Path) -> None:
 
             resp = await _launch_terminal(client, session_id, bridge_inject_dir=True)
             assert resp.status_code == 200, resp.text
-            resource_registry.recreate_on_close = True
-            await reaper._reap(pane)
-            # The re-created pane reuses the relay, so it must keep serving.
+            # The relay binds from a fixed port range, so the new one may reuse the port.
             async with httpx.AsyncClient() as probe:
                 await probe.get(json.loads(relay_file.read_text())["url"], timeout=2.0)
         finally:

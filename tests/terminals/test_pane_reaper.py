@@ -6,7 +6,9 @@ import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from omnigent.entities.session_resources import terminal_resource_id
@@ -300,8 +302,89 @@ async def test_runner_busy_check_counts_a_viewer_only_on_recent_input(
     assert not await reaper._is_busy(pane)
 
 
-class _FakeOpenCodeServer:
-    """Stands in for a session's ``opencode serve`` subprocess."""
+async def test_runner_busy_check_reads_output_from_the_screen_not_tmux_activity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Fresh tmux activity spares a pane only while the watcher sees its screen change.
+
+    An idle TUI that animates its title or repaints the same screen keeps tmux's
+    ``window_activity`` fresh forever. Without a fresh watcher view, tmux decides.
+    """
+    monkeypatch.setattr(native_cost_popup, "_tmux_last_client_input_at", lambda *_args: None)
+    monkeypatch.setattr(native_cost_popup, "_tmux_window_activity_at", lambda *_args: time.time())
+    monkeypatch.setattr(claude_native_bridge, "_APPROVAL_WAIT_ROOT", tmp_path / "approval-waits")
+    registry = TerminalRegistry()
+    instance = make_test_terminal_instance("codex", "main", tmp_path)
+    registry._by_conversation["conv_spinner"] = {("codex", "main"): instance}
+    app = create_runner_app(
+        terminal_registry=registry,
+        resource_registry=SessionResourceRegistry(terminal_registry=registry),
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+    )
+    reaper = app.state.native_pane_reaper
+    assert reaper is not None
+    pane = PaneRef("conv_spinner", terminal_resource_id("codex", "main"), "codex", tmp_path)
+
+    assert await reaper._is_busy(pane)
+    now = time.monotonic()
+    instance._screen_watch_started_at = now - 2 * PANE_OUTPUT_BUSY_WINDOW_S
+    instance._screen_watched_at = now
+    assert not await reaper._is_busy(pane)
+    instance._screen_changed_at = now - 1.0
+    assert await reaper._is_busy(pane)
+
+
+class _SessionStatusServerClient(NullServerClient):
+    """Answers the runner's session GET with ``status``, or fails it when ``None``."""
+
+    def __init__(self) -> None:
+        self.status: str | None = None
+
+    async def get(self, url: str, **kwargs: object) -> object:  # type: ignore[override]
+        del url, kwargs
+        if self.status is None:
+            raise httpx.ConnectError("server unreachable")
+        body = {"status": self.status}
+        return SimpleNamespace(status_code=200, json=lambda: body)
+
+
+async def test_runner_busy_check_settles_a_running_record_the_server_has_settled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A ``running`` record with no other evidence spares the pane only while the server agrees.
+
+    The end of most native turns reaches the runner as a server relay; a lost
+    relay leaves the record ``running`` until the session is deleted.
+    """
+    monkeypatch.setattr(native_cost_popup, "_tmux_last_client_input_at", lambda *_args: None)
+    monkeypatch.setattr(native_cost_popup, "_tmux_window_activity_at", lambda *_args: None)
+    monkeypatch.setattr(claude_native_bridge, "_APPROVAL_WAIT_ROOT", tmp_path / "approval-waits")
+    server = _SessionStatusServerClient()
+    registry = TerminalRegistry()
+    app = create_runner_app(
+        terminal_registry=registry,
+        resource_registry=SessionResourceRegistry(terminal_registry=registry),
+        server_client=server,  # type: ignore[arg-type]
+    )
+    reaper = app.state.native_pane_reaper
+    assert reaper is not None
+    pane = PaneRef("conv_lost_idle", terminal_resource_id("codex", "main"), "codex", tmp_path)
+    app.state.native_pane_status["conv_lost_idle"] = "running"
+
+    assert await reaper._is_busy(pane), "an unreachable server must not settle the record"
+    server.status = "running"
+    assert await reaper._is_busy(pane)
+    server.status = "idle"
+    assert not await reaper._is_busy(pane)
+    assert app.state.native_pane_status["conv_lost_idle"] == "idle"
+
+
+class _FakeHelperServer:
+    """Stands in for a session's ``codex app-server`` or ``opencode serve``."""
 
     def __init__(self) -> None:
         self.closed = False
@@ -310,31 +393,34 @@ class _FakeOpenCodeServer:
         self.closed = True
 
 
+_HELPER_SERVERS: dict[str, dict[str, object]] = {
+    "codex": native_runtime._AUTO_CODEX_APP_SERVERS,  # type: ignore[dict-item]
+    "opencode": native_runtime._AUTO_OPENCODE_SERVERS,  # type: ignore[dict-item]
+}
+
+
 def _start_sidecars(
     conv: str, terminal_name: str
-) -> tuple[asyncio.Task[bool], _FakeOpenCodeServer | None]:
+) -> tuple[asyncio.Task[bool], _FakeHelperServer | None]:
     forwarder = asyncio.create_task(asyncio.Event().wait())
-    native_runtime._register_auto_forwarder_task(conv, forwarder)
+    native_runtime._register_auto_forwarder_task(conv, forwarder)  # type: ignore[arg-type]
     server = None
-    if terminal_name == "opencode":
-        server = _FakeOpenCodeServer()
-        native_runtime._AUTO_OPENCODE_SERVERS[conv] = server  # type: ignore[assignment]
+    if (servers := _HELPER_SERVERS.get(terminal_name)) is not None:
+        server = _FakeHelperServer()
+        servers[conv] = server
     return forwarder, server
 
 
-@pytest.mark.parametrize("recreated_during_close", [False, True])
-@pytest.mark.parametrize("terminal_name", ["claude", "opencode"])
-async def test_runner_reap_releases_only_the_reaped_panes_sidecars(
+@pytest.mark.parametrize("terminal_name", ["claude", "codex", "opencode"])
+async def test_runner_reap_releases_sidecars_before_a_recreate_takes_over(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     terminal_name: str,
-    recreated_during_close: bool,
 ) -> None:
     """
-    Reaping a pane cancels its forwarder and closes its OpenCode server.
-
-    Both otherwise outlive the pane for the runner's lifetime. A message that
-    re-creates the session while the close awaits gets new ones, which survive.
+    Reaping a pane releases its forwarder and helper server, which otherwise
+    outlive it for the runner's lifetime. A message that re-creates the session
+    during the reap waits on the terminal-ensure lock and keeps its own.
     """
     conv = f"conv_reap_{terminal_name}"
     registry = TerminalRegistry()
@@ -348,40 +434,49 @@ async def test_runner_reap_releases_only_the_reaped_panes_sidecars(
     )
     reaper = app.state.native_pane_reaper
     assert reaper is not None
-    sidecars = [_start_sidecars(conv, terminal_name)]
-    if recreated_during_close:
-        close_terminal = resource_registry.close_terminal
+    reaped_forwarder, reaped_server = _start_sidecars(conv, terminal_name)
+    recreated: list[tuple[asyncio.Task[bool], _FakeHelperServer | None]] = []
+    closing, finish_close = asyncio.Event(), asyncio.Event()
+    close_terminal = resource_registry.close_terminal
 
-        async def close_then_recreate(session_id: str, terminal_id: str) -> bool:
-            closed = await close_terminal(session_id, terminal_id)
-            sidecars.append(_start_sidecars(conv, terminal_name))
-            return closed
+    async def slow_close(session_id: str, terminal_id: str) -> bool:
+        closed = await close_terminal(session_id, terminal_id)
+        closing.set()
+        await finish_close.wait()
+        return closed
 
-        monkeypatch.setattr(resource_registry, "close_terminal", close_then_recreate)
+    monkeypatch.setattr(resource_registry, "close_terminal", slow_close)
+    lock = app.state.native_terminal_ensure_locks[terminal_name].setdefault(conv, asyncio.Lock())
+
+    async def recreate() -> None:
+        async with lock:
+            recreated.append(_start_sidecars(conv, terminal_name))
+
     pane = PaneRef(
         conv, terminal_resource_id(terminal_name, "main"), terminal_name, instance.socket_path
     )
     try:
-        await reaper._reap(pane)
+        reap = asyncio.create_task(reaper._reap(pane))
+        await closing.wait()
+        recreate_task = asyncio.create_task(recreate())
+        await asyncio.sleep(0)
+        assert not recreated, "the re-create ran while the reap was closing the pane"
+        finish_close.set()
+        await asyncio.gather(reap, recreate_task)
 
-        assert registry.get(conv, terminal_name, "main") is None
-        (reaped_forwarder, reaped_server), *recreated = sidecars
-        if recreated:
-            [(new_forwarder, new_server)] = recreated
-            assert native_runtime._AUTO_FORWARDER_TASKS.get(conv) is new_forwarder
-            assert not new_forwarder.done(), "the re-created session's forwarder was cancelled"
-            assert native_runtime._AUTO_OPENCODE_SERVERS.get(conv) is new_server
-            assert new_server is None or not new_server.closed
-        else:
-            assert reaped_forwarder.done(), "forwarder still running after its pane was reaped"
-            assert conv not in native_runtime._AUTO_FORWARDER_TASKS
-            assert conv not in native_runtime._AUTO_OPENCODE_SERVERS
-            assert reaped_server is None or reaped_server.closed
+        assert reaped_forwarder.done(), "forwarder still running after its pane was reaped"
+        assert reaped_server is None or reaped_server.closed
+        [(new_forwarder, new_server)] = recreated
+        assert native_runtime._AUTO_FORWARDER_TASKS.get(conv) is new_forwarder
+        assert not new_forwarder.done(), "the re-created session's forwarder was cancelled"
+        if new_server is not None:
+            assert _HELPER_SERVERS[terminal_name].get(conv) is new_server
+            assert not new_server.closed
     finally:
-        for forwarder, _server in sidecars:
-            forwarder.cancel()
-        await asyncio.gather(
-            *(forwarder for forwarder, _server in sidecars), return_exceptions=True
-        )
+        tasks = [reaped_forwarder, *(forwarder for forwarder, _server in recreated)]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         native_runtime._AUTO_FORWARDER_TASKS.pop(conv, None)
-        native_runtime._AUTO_OPENCODE_SERVERS.pop(conv, None)
+        for servers in _HELPER_SERVERS.values():
+            servers.pop(conv, None)
