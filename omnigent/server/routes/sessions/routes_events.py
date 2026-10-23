@@ -280,6 +280,7 @@ from omnigent.server.schemas import (
 )
 from omnigent.server.session_live_state import last_liveness_stamp
 from omnigent.server.session_metadata_logging import log_session_metadata
+from omnigent.server.session_orchestration import require_orchestration_source
 from omnigent.server.startup_inputs import StartupDispatch, StartupInputContext
 from omnigent.server.subagent_activity import (
     native_subagent_terminal_status,
@@ -1084,6 +1085,37 @@ def register_events_routes(
                 _EXTERNAL_ASSISTANT_MESSAGE_TYPE,
             ),
         )
+        peer_message = body.type == "session_message"
+        if peer_message:
+            if not isinstance(request, Request):
+                raise OmnigentError(
+                    "Session messages require a runner HTTP request", code=ErrorCode.FORBIDDEN
+                )
+            source = await asyncio.to_thread(
+                require_orchestration_source,
+                request,
+                user_id,
+                conversation_store,
+                permission_store,
+                target_id=session_id,
+            )
+            message = body.data.get("message")
+            if not isinstance(message, str) or not message.strip() or len(message) > 8000:
+                raise OmnigentError(
+                    "Provide a message of 1–8000 characters", code=ErrorCode.INVALID_INPUT
+                )
+            body = SessionEventInput(
+                type="message",
+                data={
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"[Message from session {source.id}]\n{message}",
+                        }
+                    ],
+                },
+            )
         if body.type in {
             _EXTERNAL_CODEX_APPROVAL_MODE_CHANGE_TYPE,
             _EXTERNAL_PERMISSION_MODE_CHANGE_TYPE,
@@ -3191,6 +3223,16 @@ def register_events_routes(
                     session_id,
                     exc_info=True,
                 )
+        if peer_message:
+            assert isinstance(request, Request)
+            await asyncio.to_thread(
+                require_orchestration_source,
+                request,
+                user_id,
+                conversation_store,
+                permission_store,
+                target_id=session_id,
+            )
         pending_background_title = prepare_background_session_title(
             coordinator=background_title_coordinator,
             conversation=conv,

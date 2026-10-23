@@ -452,6 +452,9 @@ class ToolManager:
         (Cancellation uses the unified ``sys_cancel_task``; inspection
         is via inbox auto-delivery.)
         """
+        from omnigent.tools.builtins.session_message import SysSessionMessageTool
+
+        self._tools[SysSessionMessageTool.name()] = SysSessionMessageTool()
         # Read-only discovery tools: always available.
         self._tools[SysSessionListTool.name()] = SysSessionListTool()
         self._tools[SysSessionGetHistoryTool.name()] = SysSessionGetHistoryTool()

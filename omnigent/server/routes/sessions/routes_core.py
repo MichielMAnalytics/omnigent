@@ -43,6 +43,7 @@ from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCategory, ErrorCode, ErrorImpact, ErrorPhase, OmnigentError
 from omnigent.models.model_override import validate_model_override
 from omnigent.runner.identity import (
+    ORCHESTRATION_SOURCE_HEADER,
     RUNNER_TUNNEL_TOKEN_HEADER,
 )
 from omnigent.runner.routing import RunnerRouter, routing_host_id
@@ -205,6 +206,7 @@ from omnigent.server.schemas import (
     SessionResponse,
     UpdateSessionRequest,
 )
+from omnigent.server.session_orchestration import require_orchestration_source
 from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.comment_store import CommentStore
@@ -891,6 +893,13 @@ def register_core_routes(
         """
         user_id = _require_user(request, auth_provider)
         content_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+        if (
+            content_type == "multipart/form-data"
+            and ORCHESTRATION_SOURCE_HEADER in request.headers
+        ):
+            raise OmnigentError(
+                "Independent sessions require agent_id", code=ErrorCode.INVALID_INPUT
+            )
         form = await request.form(max_files=21) if content_type == "multipart/form-data" else None
         if form is not None and (form.get("bundle") is not None or "initial_files" not in form):
             result = await _create_bundled_session_from_multipart(request, user_id)
@@ -937,11 +946,41 @@ def register_core_routes(
             # message survives in each entry's `msg`.
             raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
 
+        orchestration_source = request.headers.get(ORCHESTRATION_SOURCE_HEADER)
+        if orchestration_source is not None:
+            source = await asyncio.to_thread(
+                require_orchestration_source,
+                request,
+                user_id,
+                conversation_store,
+                permission_store,
+            )
+            if body.parent_session_id is not None:
+                raise OmnigentError(
+                    "Orchestration creates independent sessions", code=ErrorCode.INVALID_INPUT
+                )
+            if body.host_type == "external":
+                if not source.host_id or not source.workspace:
+                    raise OmnigentError(
+                        "Sender needs a connected host and workspace", code=ErrorCode.INVALID_INPUT
+                    )
+                body = body.model_copy(
+                    update={"host_id": source.host_id, "workspace": source.workspace}
+                )
+
         # Checked before the session exists so a rejected create leaves nothing
         # behind.
         await _check_initial_input(request, body.initial_input)
         if body.requested_host_id is not None:
             await _check_requested_host_id(request, body.requested_host_id, user_id)
+        if orchestration_source is not None:
+            await asyncio.to_thread(
+                require_orchestration_source,
+                request,
+                user_id,
+                conversation_store,
+                permission_store,
+            )
         creation_metadata(parent_session_id=body.parent_session_id, host_type=body.host_type)
         resp, conv = await _create_session_from_existing_agent(
             conversation_store,
@@ -1106,7 +1145,7 @@ def register_core_routes(
         # Default-public grant only once every launch step has been accepted, so a
         # rejected request never leaves a public session behind. Sub-agent
         # children follow their parent's grants instead.
-        if user_id is not None and body.parent_session_id is None:
+        if user_id is not None and body.parent_session_id is None and orchestration_source is None:
             await _grant_default_public(
                 request.app.state,
                 permission_store,

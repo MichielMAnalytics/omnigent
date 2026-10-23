@@ -84,6 +84,7 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
+from omnigent.tools.builtins.session_message import SysSessionMessageTool
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
 from omnigent.tools.builtins.spawn import (
     # Shared contract values with the in-process sys_session_* tools. Imported
@@ -474,7 +475,8 @@ _BROWSER_TIMEOUT_ERROR = (
 # unconditionally for policy enforcement (independent of the spec's
 # ``os_env`` gate), so the native relay assembles them separately.
 _NATIVE_RELAY_BUILTIN_TOOLS = (
-    _COMMENT_TOOLS
+    {SysSessionMessageTool.name()}
+    | _COMMENT_TOOLS
     | _SESSION_QUERY_TOOLS
     | _SESSION_SELF_WRITE_TOOLS
     | _ASYNC_INBOX_TOOLS
@@ -597,6 +599,7 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
             SysSessionGetHistoryTool,
             SysSessionGetInfoTool,
             SysSessionRenameTool,
+            SysSessionMessageTool,
             SysAgentGetTool,
             SysAgentListTool,
             SysAgentDownloadTool,
@@ -863,7 +866,8 @@ def _bounded_discovery_result(
 
 # Union of all locally-dispatched tools.
 _ALL_LOCAL_TOOLS = (
-    _OS_ENV_TOOLS
+    {SysSessionMessageTool.name()}
+    | _OS_ENV_TOOLS
     | _REST_TOOLS
     | _FILE_TOOLS
     | _TERMINAL_TOOLS
@@ -3496,6 +3500,11 @@ async def _execute_session_create(
                 )
             }
         )
+    placement = args.get("placement", "child")
+    if placement not in ("child", "same_host", "arclet"):
+        return json.dumps({"error": "placement must be child, same_host or arclet"})
+    if placement != "child" and has_config_path:
+        return json.dumps({"error": "Independent sessions require agent_id"})
     if has_config_path:
         # The multipart create carries only the config bundle, so an effort
         # passed here would never reach the child. Refuse instead of dropping it.
@@ -3526,8 +3535,22 @@ async def _execute_session_create(
         model=args.get("model"),
         reasoning_effort=args.get("reasoning_effort"),
     )
+    headers: dict[str, str] = {}
+    if placement != "child":
+        from omnigent.runner.identity import ORCHESTRATION_SOURCE_HEADER
+
+        body.pop("parent_session_id")
+        # The server derives the same host/workspace from this bound source.
+        headers[ORCHESTRATION_SOURCE_HEADER] = conversation_id
+        if placement == "arclet":
+            body.update(host_type="managed", sandbox_provider="arclet")
+            initial_items = body.pop("initial_items", None)
+            if isinstance(initial_items, list) and initial_items:
+                body["initial_input"] = initial_items[0]
+        else:
+            body.pop("initial_items", None)
     try:
-        resp = await server_client.post("/v1/sessions", json=body, timeout=30.0)
+        resp = await server_client.post("/v1/sessions", json=body, headers=headers, timeout=30.0)
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"error": f"sys_session_create failed: {exc}"})
     if resp.status_code == 404:
@@ -3541,6 +3564,19 @@ async def _execute_session_create(
     data = resp.json()
     if not isinstance(data.get("id"), str) or not data["id"]:
         return json.dumps({"error": "server did not return a child session id"})
+    if placement != "child":
+        handle = {"conversation_id": data["id"], "kind": "default", "status": "created"}
+        if placement == "same_host" and args.get("message"):
+            from omnigent.runner.session_message import execute_message_tool
+
+            handle["initial_message"] = json.loads(
+                await execute_message_tool(
+                    {"session_id": data["id"], "message": args["message"]},
+                    server_client,
+                    conversation_id,
+                )
+            )
+        return json.dumps(handle)
     return _finalize_created_session(
         data,
         conversation_id=conversation_id,
@@ -6682,6 +6718,10 @@ async def execute_tool(
             )
         elif tool_name in _LIST_MODELS_TOOLS:
             output = await _execute_list_models_tool(agent_spec=agent_spec)
+        elif tool_name == SysSessionMessageTool.name():
+            from omnigent.runner.session_message import execute_message_tool
+
+            output = await execute_message_tool(args, server_client, conversation_id)
         elif tool_name in _SESSION_CREATE_TOOLS:
             output = await _execute_session_create(
                 args,

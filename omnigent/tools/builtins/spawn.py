@@ -895,8 +895,8 @@ class SysSessionCreateTool(Tool):
     ``sys_session_get_info`` to monitor it, or ``sys_session_send`` (with
     the returned ``conversation_id``) to drive it further.
 
-    Runner-dispatched: both modes force ``parent_session_id`` to the
-    caller.
+    Runner-dispatched: defaults to a child. With ``agent_id``, independent
+    placements launch private top-level sessions without completion forwarding.
     """
 
     @classmethod
@@ -908,7 +908,7 @@ class SysSessionCreateTool(Tool):
     def description(cls) -> str:
         """:returns: Human-readable description of the tool."""
         return (
-            "Create a child session from an agent. This launches a "
+            "Create a session from an agent. This launches a "
             "separate Omnigent agent session — its own conversation, "
             "visible in the session tree, optionally a different "
             "registered agent. It is not your harness's built-in "
@@ -925,8 +925,12 @@ class SysSessionCreateTool(Tool):
             "with sys_os_write) and launches it. Always use agent_id "
             "for an agent that already exists — never download and "
             "re-upload its bundle. Optionally queue an initial user "
-            "message. The new session is always a child of the calling "
-            "session (you cannot create top-level or sibling sessions). "
+            "message. By default the new session is a child of the caller. "
+            "With agent_id, placement='same_host' creates an independent private session "
+            "on the caller's host/workspace; placement='arclet' provisions a new Arclet "
+            "when the server supports it. These placements require orchestration enabled "
+            "and a private sending session. Independent sessions do not forward replies: "
+            "read their status/history, and use sys_session_message for subsequent work. "
             "Returns {conversation_id, agent_id, title, status}; the "
             "session runs asynchronously — monitor it with "
             "sys_session_get_history / sys_session_get_info or drive it "
@@ -951,6 +955,14 @@ class SysSessionCreateTool(Tool):
                 "parameters": {
                     "type": "object",
                     "properties": {
+                        "placement": {
+                            "type": "string",
+                            "enum": ["child", "same_host", "arclet"],
+                            "description": (
+                                "Default child; same_host or arclet launches a private "
+                                "top-level session (agent_id only)."
+                            ),
+                        },
                         "agent_id": {
                             "type": "string",
                             "description": (
