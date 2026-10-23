@@ -4200,13 +4200,13 @@ export function NewChatLandingScreen() {
     ? selectedDirectModeByHarness[selectedNativeHarness]
     : undefined;
   /** Shift+Tab: step the launch permission mode. Returns whether it took the key. */
+  const directModePickerInteractive =
+    !noExecutionTargetSelected &&
+    visiblePermissionRow != null &&
+    !(pickerLoading && !interactiveWhileLoading) &&
+    !creating;
   const cycleDirectMode = (): boolean => {
-    const pickerInteractive =
-      !noExecutionTargetSelected &&
-      visiblePermissionRow != null &&
-      !(pickerLoading && !interactiveWhileLoading) &&
-      !creating;
-    if (!pickerInteractive) return false;
+    if (!directModePickerInteractive) return false;
     const next = nextCycledPermissionMode(
       selectedNativeHarness,
       directModeOptions,
@@ -6826,6 +6826,7 @@ export function NewChatLandingScreen() {
                 onPaste,
                 placeholder: pillSkills.length > 0 ? "" : placeholderText,
                 "aria-label": placeholderText,
+                "aria-keyshortcuts": directModePickerInteractive ? "Shift+Tab" : undefined,
                 rows: 1,
                 autoFocus: !isMobileViewport,
                 "data-testid": "new-chat-landing-input",

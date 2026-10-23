@@ -2595,61 +2595,70 @@ function ComposerImpl(
     !isReadOnly &&
     !unreachable &&
     isOwnerLevel(permissionLevel);
-  // Modes this session refused (e.g. Auto when the account lacks it). Shift+Tab
-  // skips them until one is applied, so the cycle can't get stuck.
-  const refusedCycleModesRef = useRef<{ sessionId: string | null; modes: Set<string> }>({
-    sessionId: null,
-    modes: new Set(),
-  });
-  const refusedCycleModes = (sessionId: string | null): Set<string> => {
-    if (refusedCycleModesRef.current.sessionId !== sessionId)
-      refusedCycleModesRef.current = { sessionId, modes: new Set() };
-    return refusedCycleModesRef.current.modes;
+  // After a Shift+Tab press that didn't land (refused, downgraded or failed),
+  // the next press continues past that mode instead of retrying it.
+  const cycleCursorRef = useRef<{ sessionId: string | null; from: string; past: string } | null>(
+    null,
+  );
+  const currentPermissionMode = (): string => {
+    const state = useChatStore.getState();
+    return showClaudePermissionMode ? state.claudePermissionMode : state.codexApprovalMode;
   };
-  /** Applies *mode*, remembering whether the server refused it. */
-  const changePermission = async (mode: string): Promise<void> => {
-    if (isReadOnly || unreachable || configBusyRef.current) return;
+  /** Applies *mode*; resolves whether the session landed on it. */
+  const changePermission = async (mode: string): Promise<boolean> => {
+    if (isReadOnly || unreachable || configBusyRef.current) return false;
     configBusyRef.current = true;
     setConfigBusy(true);
     const sourceSessionId = useChatStore.getState().conversationId;
-    // null: a transport failure, which says nothing about the mode itself.
-    let refused: boolean | null = null;
     try {
       const store = useChatStore.getState();
       if (showClaudePermissionMode) await store.setClaudePermissionMode(mode);
       else if (showCodexApprovalMode) await store.setCodexApprovalMode(mode);
-      const after = useChatStore.getState();
-      const landed = showClaudePermissionMode
-        ? after.claudePermissionMode
-        : after.codexApprovalMode;
       // The store reconciles to the mode the server confirms the session reached.
-      refused = Boolean(landed) && landed !== mode;
+      const landed = currentPermissionMode() === mode;
+      if (landed) cycleCursorRef.current = null;
+      return landed;
     } catch (error) {
       if (useChatStore.getState().conversationId === sourceSessionId)
         setCommandError(error instanceof Error ? error.message : "Unable to change permissions");
-      refused = error instanceof ApiError ? true : null;
+      return false;
     } finally {
       configBusyRef.current = false;
       setConfigBusy(false);
     }
-    if (refused === null || useChatStore.getState().conversationId !== sourceSessionId) return;
-    const modes = refusedCycleModes(sourceSessionId);
-    if (refused) modes.add(mode);
-    else modes.delete(mode);
   };
   /** Shift+Tab: step to the next permission mode. Returns whether it took the key. */
   const cyclePermissionMode = (): boolean => {
     if (!permissionControlInteractive) return false;
     // Hold the key while a change is in flight so focus doesn't jump away.
     if (configBusyRef.current) return true;
-    const next = nextCycledPermissionMode(
-      permissionVocabulary.harness,
-      permissionOptions,
-      selectedPermissionMode,
-      refusedCycleModes(useChatStore.getState().conversationId),
-    );
+    const sessionId = useChatStore.getState().conversationId;
+    const cursor = cycleCursorRef.current;
+    const resume =
+      cursor?.sessionId === sessionId && cursor.from === selectedPermissionMode
+        ? cursor.past
+        : null;
+    const resumed =
+      resume === null
+        ? null
+        : nextCycledPermissionMode(
+            permissionVocabulary.harness,
+            permissionOptions,
+            resume,
+            new Set([selectedPermissionMode]),
+          );
+    const next =
+      resumed ??
+      nextCycledPermissionMode(
+        permissionVocabulary.harness,
+        permissionOptions,
+        selectedPermissionMode,
+      );
     if (next === null) return false;
-    void changePermission(next);
+    void changePermission(next).then((landed) => {
+      if (!landed && useChatStore.getState().conversationId === sessionId)
+        cycleCursorRef.current = { sessionId, from: currentPermissionMode(), past: next };
+    });
     return true;
   };
   useEffect(() => setGoalDialogOpen(false), [conversationId]);
@@ -3815,6 +3824,7 @@ function ComposerImpl(
             if (backdropRef.current) backdropRef.current.scrollTop = e.currentTarget.scrollTop;
           },
           "aria-label": "Message the agent",
+          "aria-keyshortcuts": permissionControlInteractive ? "Shift+Tab" : undefined,
           placeholder: composerLockedByBtw
             ? "Side chat open — press Esc to close"
             : readOnlyReason !== null

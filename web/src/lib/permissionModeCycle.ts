@@ -43,7 +43,7 @@ export function isCyclablePermissionMode(
  * @param harness Harness id used to classify modes, e.g. `"claude-native"`.
  * @param options The chip's menu options in display order.
  * @param current The selected mode value, or `null` when unknown.
- * @param unavailable Modes to skip, e.g. ones this session already refused.
+ * @param unavailable Modes to skip, e.g. the selected mode when resuming past a failed press.
  * @returns The next mode value, or `null` when no other mode is reachable.
  */
 export function nextCycledPermissionMode(

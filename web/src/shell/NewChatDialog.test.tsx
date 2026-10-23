@@ -11021,6 +11021,7 @@ describe("landing permission-mode shortcut", () => {
     fireEvent.change(input, { target: { value: "draft stays" } });
     const chip = screen.getByTestId("new-chat-landing-permission-chip");
     expect(chip).toHaveTextContent("Manual");
+    expect(input).toHaveAttribute("aria-keyshortcuts", "Shift+Tab");
 
     const seen: string[] = [];
     for (let press = 0; press < 5; press += 1) {
@@ -11053,6 +11054,7 @@ describe("landing permission-mode shortcut", () => {
     const chip = await screen.findByTestId("new-chat-landing-permission-chip");
     await waitFor(() => expect(chip).toBeDisabled());
     const before = chip.textContent;
+    expect(screen.getByTestId("new-chat-landing-input")).not.toHaveAttribute("aria-keyshortcuts");
     expect(pressShiftTab()).toBe(true);
     expect(chip.textContent).toBe(before);
   });

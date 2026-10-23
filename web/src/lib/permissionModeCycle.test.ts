@@ -104,15 +104,23 @@ describe("nextCycledPermissionMode", () => {
     ).toBe("ask-for-approval");
   });
 
-  it("skips modes the session refused", () => {
+  it("resumes past a failed attempt without returning to the selected mode", () => {
     expect(
       nextCycledPermissionMode(
         "claude-native",
         CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES,
-        "default",
-        new Set(["auto"]),
+        "auto",
+        new Set(["default"]),
       ),
     ).toBe("acceptEdits");
+    expect(
+      nextCycledPermissionMode(
+        "claude-native",
+        CLAUDE_NATIVE_SWITCHABLE_PERMISSION_MODES,
+        "plan",
+        new Set(["default"]),
+      ),
+    ).toBe("auto");
   });
 
   it("returns null when no other safe mode exists", () => {

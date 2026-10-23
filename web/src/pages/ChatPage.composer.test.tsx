@@ -2832,6 +2832,7 @@ describe("Composer permission-mode shortcut", () => {
     const input = renderClaudeSession("cycle-claude");
     input.focus();
     fireEvent.change(input, { target: { value: "half-written prompt" } });
+    expect(input).toHaveAttribute("aria-keyshortcuts", "Shift+Tab");
 
     expect(pressShiftTab(input)).toBe(false);
     await waitFor(() => expect(chip()).toHaveTextContent("Auto"));
@@ -2862,7 +2863,7 @@ describe("Composer permission-mode shortcut", () => {
     await settled();
   });
 
-  it("skips a mode the server refused on the next press", async () => {
+  it("moves past a mode the server refused on the next press", async () => {
     const setMode = spyClaudeSetter(refuseAuto);
     const input = renderClaudeSession("cycle-refused");
 
@@ -2874,7 +2875,7 @@ describe("Composer permission-mode shortcut", () => {
     expect(setMode.mock.calls.map(([mode]) => mode)).toEqual(["auto", "acceptEdits"]);
   });
 
-  it("skips a mode the server confirmed as a different one", async () => {
+  it("moves past a mode the server confirmed as a different one", async () => {
     const setMode = spyClaudeSetter((mode) => (mode === "auto" ? "default" : mode));
     const input = renderClaudeSession("cycle-downgraded");
 
@@ -2887,23 +2888,35 @@ describe("Composer permission-mode shortcut", () => {
     expect(setMode.mock.calls.map(([mode]) => mode)).toEqual(["auto", "acceptEdits"]);
   });
 
-  it("retries a mode after a transport failure", async () => {
+  it("reaches a failed mode again on the next lap", async () => {
     const setMode = spyClaudeSetter((mode, call) =>
       call === 0 ? new TypeError("Failed to fetch") : mode,
     );
-    const input = renderClaudeSession("cycle-network");
+    const input = renderClaudeSession("cycle-next-lap");
 
     pressShiftTab(input);
     expect(await screen.findByText("Failed to fetch")).toBeInTheDocument();
-    await settled();
-    pressShiftTab(input);
-    await waitFor(() => expect(chip()).toHaveTextContent("Auto"));
-    expect(setMode.mock.calls.map(([mode]) => mode)).toEqual(["auto", "auto"]);
+    const step = async (label: string) => {
+      await settled();
+      pressShiftTab(input);
+      await waitFor(() => expect(chip()).toHaveTextContent(label));
+    };
+    await step("Accept edits");
+    await step("Plan");
+    await step("Manual");
+    await step("Auto");
+    expect(setMode.mock.calls.map(([mode]) => mode)).toEqual([
+      "auto",
+      "acceptEdits",
+      "plan",
+      "default",
+      "auto",
+    ]);
   });
 
-  it("cycles into a refused mode again once the menu applies it", async () => {
+  it("starts from the selected mode again after a menu change", async () => {
     const setMode = spyClaudeSetter((mode, call) => (call === 0 ? refuseAuto(mode) : mode));
-    const input = renderClaudeSession("cycle-refusal-cleared");
+    const input = renderClaudeSession("cycle-menu-reset");
     const pick = async (mode: string) => {
       fireEvent.keyDown(chip(), { key: "ArrowDown" });
       fireEvent.click(screen.getByTestId(`composer-permission-option-${mode}`));
@@ -2913,11 +2926,11 @@ describe("Composer permission-mode shortcut", () => {
     pressShiftTab(input);
     await screen.findByText("Could not switch to auto mode");
     await settled();
-    await pick("auto");
+    await pick("plan");
     await pick("default");
     pressShiftTab(input);
     await waitFor(() => expect(chip()).toHaveTextContent("Auto"));
-    expect(setMode.mock.calls.map(([mode]) => mode)).toEqual(["auto", "auto", "default", "auto"]);
+    expect(setMode.mock.calls.map(([mode]) => mode)).toEqual(["auto", "plan", "default", "auto"]);
   });
 
   it("does not cycle a Codex session into Full Access", async () => {
@@ -2928,11 +2941,14 @@ describe("Composer permission-mode shortcut", () => {
     });
     const setApproval = vi
       .spyOn(useChatStore.getState(), "setCodexApprovalMode")
-      .mockResolvedValue(undefined);
+      .mockImplementation(async (mode) => {
+        useChatStore.setState({ codexApprovalMode: mode });
+      });
     renderWithTooltips(<Composer {...composerProps({ showCodexApprovalMode: true })} />);
 
     pressShiftTab(textarea());
-    await waitFor(() => expect(setApproval).toHaveBeenCalledWith("ask-for-approval"));
+    await waitFor(() => expect(chip()).toHaveTextContent("Ask for approval"));
+    expect(setApproval.mock.calls.map(([mode]) => mode)).toEqual(["ask-for-approval"]);
   });
 
   it("does not cycle a Devin session into Dangerous", async () => {
@@ -2980,6 +2996,7 @@ describe("Composer permission-mode shortcut", () => {
     const setMode = spyClaudeSetter();
     renderWithTooltips(<Composer {...composerProps(props)} />);
 
+    expect(textarea()).not.toHaveAttribute("aria-keyshortcuts");
     expect(pressShiftTab(textarea())).toBe(true);
     expect(fireEvent.keyDown(textarea(), { key: "Tab", shiftKey: true, ctrlKey: true })).toBe(true);
     expect(setMode).not.toHaveBeenCalled();

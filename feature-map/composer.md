@@ -43,9 +43,10 @@ and steers messages while the agent is busy.
   chip to the next mode in menu order, wrapping, and never selects a
   full-access or unclassified mode. It acts only while the chip itself is
   clickable. States: slash/mention menu open (menu wins), chip disabled or
-  absent (native focus move), change in flight (press swallowed), mode refused
-  or downgraded by the server (error shown, later presses skip it until it is
-  applied), no other safe mode (native focus move).
+  absent (native focus move), change in flight (press swallowed), change
+  refused, downgraded or failed (the next press continues past that mode; it
+  comes round again on the next lap), no other safe mode (native focus move).
+  The prompt advertises the shortcut with `aria-keyshortcuts` while it acts.
 - `managed-mcp-picker`: choose administrator-configured services before launch
   on a host or sandbox. States: loading, empty, error/retry, selected, unavailable,
   remembered selection, explicitly none, restored connection needing sign-in.
@@ -330,7 +331,7 @@ Other connection providers alone do not enable the managed MCP picker.
   new-session composer,
   `tests/e2e_ui/start_session/test_start_session.py::test_start_session_shift_tab_cycles_permission_mode`.
   The in-session E2E is nightly. Component tests cover the in-flight, refused,
-  downgraded, transport-failure, slash-menu, viewer, read-only and unreachable
+  downgraded, next-lap, menu-reset, slash-menu, viewer, read-only and unreachable
   states in `web/src/pages/ChatPage.composer.test.tsx`, and the no-host state in
   `web/src/shell/NewChatDialog.test.tsx`; mode ordering and classification are in
   `web/src/lib/permissionModeCycle.test.ts`.
