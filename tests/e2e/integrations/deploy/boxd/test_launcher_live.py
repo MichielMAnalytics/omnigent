@@ -99,6 +99,26 @@ def test_put_round_trips_a_large_file(
     assert remote_sha == hashlib.sha256(payload).hexdigest()
 
 
+def test_put_keeps_a_replaced_files_mode_and_ships_empty_files(
+    launcher: BoxdSandboxLauncher, machine: str, tmp_path: Path
+) -> None:
+    """A replaced script stays executable, and an empty file lands in a new directory."""
+    root = "/home/boxd/omnigent-put-check"
+    launcher.run(
+        machine, f"mkdir -p {root} && printf old > {root}/run.sh && chmod 755 {root}/run.sh"
+    )
+    script = tmp_path / "run.sh"
+    script.write_bytes(b"#!/bin/sh\necho replaced\n")
+    launcher.put(machine, script, f"{root}/run.sh")
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    launcher.put(machine, empty, f"{root}/new/empty")
+    result = launcher.run(
+        machine, f"stat -c '%a %s' {root}/run.sh {root}/new/empty && {root}/run.sh"
+    )
+    assert result.stdout.splitlines() == [f"755 {len(script.read_bytes())}", "644 0", "replaced"]
+
+
 def test_stream_exec_and_foreground(launcher: BoxdSandboxLauncher, machine: str) -> None:
     """Streaming merges both streams; the foreground attach reports the exit code."""
     process = launcher.stream_exec(machine, "echo out-line; echo err-line >&2; exit 3")

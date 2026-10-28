@@ -355,7 +355,7 @@ class BoxdSandboxLauncher(SandboxLauncher):
 
     All transport rides the SDK and addresses machines by id:
     ``machines.create`` / ``delete`` for lifecycle, ``machines.exec`` for
-    commands (``bash -lc`` so login PATH applies), ``machines.files.upload``
+    commands (``bash -lc`` so login PATH applies), ``machines.fs.write``
     for file shipping, ``machines.stream_exec`` for streaming and the
     foreground attach, and ``wake`` / ``start`` for resume.
     """
@@ -797,7 +797,14 @@ class BoxdSandboxLauncher(SandboxLauncher):
 
     def put(self, sandbox_id: str, local_path: Path, remote_path: str) -> None:
         """
-        Copy a local file into the machine (the SDK chunks large uploads).
+        Copy a local file into the machine.
+
+        boxd's filesystem API (``machines.fs``, SDK 0.2.20 and later) streams
+        the file in chunks, creates missing parent directories, accepts an
+        empty file, and keeps an existing file's mode, so a replaced script
+        stays executable. An older SDK, or a machine whose boxd agent
+        predates that API (one restored from a snapshot saved before it, say),
+        gets the file through boxd's upload call instead.
 
         :param sandbox_id: Target machine.
         :param local_path: Local file to read.
@@ -805,11 +812,21 @@ class BoxdSandboxLauncher(SandboxLauncher):
         :raises click.ClickException: If the transfer fails.
         """
         client = self._boxd()
-        from boxd import BoxdError
+        import boxd
 
+        data = local_path.read_bytes()
+        # Installs through cooldown mirrors can still resolve an SDK from
+        # before `machines.fs`; its error class arrived in the same release.
+        agent_outdated = getattr(boxd, "MachineAgentOutdatedError", None)
         try:
-            client.machines.files.upload(sandbox_id, remote_path, local_path.read_bytes())
-        except BoxdError as exc:
+            if agent_outdated is not None:
+                try:
+                    client.machines.fs.write(sandbox_id, remote_path, data)
+                    return
+                except agent_outdated:
+                    pass
+            client.machines.files.upload(sandbox_id, remote_path, data)
+        except boxd.BoxdError as exc:
             raise click.ClickException(
                 f"File upload to boxd machine '{sandbox_id}' failed: {exc}"
             ) from exc

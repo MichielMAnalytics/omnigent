@@ -55,6 +55,10 @@ class _FakePermissionDeniedError(_FakeBoxdError):
     """Stands in for ``boxd.PermissionDeniedError``."""
 
 
+class _FakeMachineAgentOutdatedError(_FakeConflictError):
+    """Stands in for ``boxd.MachineAgentOutdatedError``."""
+
+
 @dataclass
 class _FakeMachine:
     """The ``Machine`` fields the launcher reads."""
@@ -129,11 +133,26 @@ class _FakeFiles:
         return len(data)
 
 
+class _FakeFs:
+    """Recording stand-in for ``machines.fs``."""
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, str, bytes]] = []
+        self.write_error: Exception | None = None
+
+    def write(self, machine_id: str, path: str, data: bytes) -> None:
+        """Record the write, or raise the configured error."""
+        if self.write_error is not None:
+            raise self.write_error
+        self.writes.append((machine_id, path, data))
+
+
 @dataclass
 class _FakeMachines:
     """Recording stand-in for the ``machines`` namespace."""
 
     files: _FakeFiles = field(default_factory=_FakeFiles)
+    fs: _FakeFs = field(default_factory=_FakeFs)
     machines: dict[str, _FakeMachine] = field(default_factory=dict)
     created: list[tuple[str, dict[str, object]]] = field(default_factory=list)
     exec_calls: list[_ExecCall] = field(default_factory=list)
@@ -228,6 +247,7 @@ def fake_boxd(monkeypatch: pytest.MonkeyPatch) -> _FakeBoxd:
     module.NotFoundError = _FakeNotFoundError  # type: ignore[attr-defined]
     module.ConflictError = _FakeConflictError  # type: ignore[attr-defined]
     module.PermissionDeniedError = _FakePermissionDeniedError  # type: ignore[attr-defined]
+    module.MachineAgentOutdatedError = _FakeMachineAgentOutdatedError  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "boxd", module)
     for name in (ORG_ENV_VAR, SNAPSHOT_ENV_VAR, SANDBOX_ENV_PASSTHROUGH_ENV_VAR):
         monkeypatch.delenv(name, raising=False)
@@ -529,23 +549,60 @@ def test_run_wraps_provider_errors(fake_boxd: _FakeBoxd) -> None:
         BoxdSandboxLauncher().run(machine_id, "true")
 
 
-def test_put_uploads_file_bytes(fake_boxd: _FakeBoxd, tmp_path: Path) -> None:
-    """put ships the local file's exact bytes to the remote path."""
+def test_put_writes_file_bytes_through_the_filesystem_api(
+    fake_boxd: _FakeBoxd, tmp_path: Path
+) -> None:
+    """put ships the local file's exact bytes to the remote path with machines.fs."""
     machine_id = _running_machine(fake_boxd)
     local = tmp_path / "wheels.tgz"
     local.write_bytes(b"\x00binary\xff")
 
     BoxdSandboxLauncher().put(machine_id, local, "/tmp/oa-wheels.tgz")
 
-    assert fake_boxd.machines.files.uploads == [
-        (machine_id, "/tmp/oa-wheels.tgz", b"\x00binary\xff")
-    ]
+    assert fake_boxd.machines.fs.writes == [(machine_id, "/tmp/oa-wheels.tgz", b"\x00binary\xff")]
+    assert fake_boxd.machines.files.uploads == []
 
 
-def test_put_wraps_provider_errors(fake_boxd: _FakeBoxd, tmp_path: Path) -> None:
-    """A failed upload becomes a launcher-contract error."""
+def test_put_falls_back_to_upload_when_the_machine_agent_predates_the_api(
+    fake_boxd: _FakeBoxd, tmp_path: Path
+) -> None:
+    """A machine restored from an older snapshot still receives the file."""
     machine_id = _running_machine(fake_boxd)
-    fake_boxd.machines.files.upload_error = _FakeBoxdError("disk full")
+    fake_boxd.machines.fs.write_error = _FakeMachineAgentOutdatedError("reboot it to update it")
+    local = tmp_path / "wheels.tgz"
+    local.write_bytes(b"wheels")
+
+    BoxdSandboxLauncher().put(machine_id, local, "/tmp/oa-wheels.tgz")
+
+    assert fake_boxd.machines.files.uploads == [(machine_id, "/tmp/oa-wheels.tgz", b"wheels")]
+
+
+def test_put_uploads_with_an_sdk_that_predates_the_filesystem_api(
+    fake_boxd: _FakeBoxd, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The extra's floor admits SDKs without machines.fs; they upload as before."""
+    monkeypatch.delattr(sys.modules["boxd"], "MachineAgentOutdatedError")
+    machine_id = _running_machine(fake_boxd)
+    local = tmp_path / "wheels.tgz"
+    local.write_bytes(b"wheels")
+
+    BoxdSandboxLauncher().put(machine_id, local, "/tmp/oa-wheels.tgz")
+
+    assert fake_boxd.machines.files.uploads == [(machine_id, "/tmp/oa-wheels.tgz", b"wheels")]
+    assert fake_boxd.machines.fs.writes == []
+
+
+@pytest.mark.parametrize("on_fallback", [False, True])
+def test_put_wraps_provider_errors(
+    fake_boxd: _FakeBoxd, tmp_path: Path, on_fallback: bool
+) -> None:
+    """A failed write, or a failed fallback upload, becomes a launcher-contract error."""
+    machine_id = _running_machine(fake_boxd)
+    if on_fallback:
+        fake_boxd.machines.fs.write_error = _FakeMachineAgentOutdatedError("reboot it")
+        fake_boxd.machines.files.upload_error = _FakeBoxdError("disk full")
+    else:
+        fake_boxd.machines.fs.write_error = _FakeBoxdError("disk full")
     local = tmp_path / "f"
     local.write_bytes(b"x")
 
